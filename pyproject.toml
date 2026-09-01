@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dementia-care-robot"
+version = "0.1.0"
+description = "Safety-first, hardware-neutral foundation for an assistive dementia care robot"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+dementia-care-robot = "dementia_care_robot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
