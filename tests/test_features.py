@@ -8,6 +8,7 @@ from unittest.mock import patch
 from dementia_care_robot.conversation import ConversationService, OfflineCompanion
 from dementia_care_robot.coordinator import CareCoordinator
 from dementia_care_robot.models import FamiliarMedia, Reminder, RiskLevel
+from dementia_care_robot.hardware import PicoBridge
 from dementia_care_robot.scheduler import ReminderScheduler
 from dementia_care_robot.storage import SQLiteStore
 from dementia_care_robot.speech import OpenAITranscriber
@@ -88,6 +89,21 @@ class FeatureTests(unittest.TestCase):
     def test_transcriber_rejects_empty_audio(self):
         with self.assertRaisesRegex(ValueError, "No audio"):
             OpenAITranscriber("secret").transcribe(b"")
+
+    def test_pico_bridge_sends_led_state_and_parses_switches(self):
+        events = []
+        stream = BytesIO()
+        bridge = PicoBridge("unused", lambda switch, action: events.append((switch, action)), stream)
+        bridge.set_led("listening")
+        bridge.handle_line("SWITCH HELP PRESS\r\n")
+        bridge.handle_line("unexpected input\n")
+        self.assertEqual(stream.getvalue(), b"LED listening\n")
+        self.assertEqual(events, [("help", "press")])
+
+    def test_pico_bridge_rejects_unknown_led_state(self):
+        bridge = PicoBridge("unused", lambda *_: None, BytesIO())
+        with self.assertRaisesRegex(ValueError, "Unknown LED state"):
+            bridge.set_led("rainbow")
 
 
 if __name__ == "__main__": unittest.main()

@@ -15,30 +15,51 @@ from urllib.parse import parse_qs, urlparse
 from .adapters import ConsoleCaregiverNotifier, ConsoleSpeaker
 from .conversation import ConversationService, OfflineCompanion, OpenAICompatibleModel
 from .coordinator import CareCoordinator
-from .models import FamiliarMedia, Reminder
+from .hardware import PicoBridge
+from .models import Assessment, FamiliarMedia, Reminder, RiskLevel
 from .scheduler import ReminderScheduler
 from .speech import OpenAITranscriber, SpeechNotConfigured
 from .storage import SQLiteStore
 
 
 class RobotApplication:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, pico_device: str | None = None) -> None:
         data_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir = data_dir / "media"
         self.media_dir.mkdir(exist_ok=True)
         self.store = SQLiteStore(data_dir / "robot.db")
         notifier, speaker = ConsoleCaregiverNotifier(), ConsoleSpeaker()
+        self.notifier = notifier
         self.scheduler = ReminderScheduler(self.store, CareCoordinator(speaker, notifier))
         model = OpenAICompatibleModel.from_environment() or OfflineCompanion()
         self.conversation = ConversationService(self.store, model, notifier)
         self.transcriber = OpenAITranscriber.from_environment()
+        self.pico = PicoBridge(pico_device, self._hardware_event) if pico_device else None
+        if self.pico:
+            self.pico.start()
+
+    def _hardware_event(self, switch: str, action: str) -> None:
+        if switch == "help" and action == "press":
+            assessment = Assessment(RiskLevel.URGENT, "The physical help switch was pressed.", "I am alerting your configured support person.")
+            self.notifier.notify(assessment)
+            self.set_status("alert")
+
+    def set_status(self, state: str) -> None:
+        if self.pico:
+            self.pico.set_led(state)
 
     def voice_turn(self, audio: bytes, content_type: str) -> tuple[str, str, str]:
         if self.transcriber is None:
             raise SpeechNotConfigured("Voice input requires ROBOT_LLM_API_KEY on the server")
-        transcript = self.transcriber.transcribe(audio, content_type)
-        reply, risk = self.conversation.respond(transcript)
-        return transcript, reply, risk.value
+        self.set_status("thinking")
+        try:
+            transcript = self.transcriber.transcribe(audio, content_type)
+            reply, risk = self.conversation.respond(transcript)
+            self.set_status("alert" if risk is RiskLevel.URGENT else "speaking")
+            return transcript, reply, risk.value
+        except Exception:
+            self.set_status("alert")
+            raise
 
 
 def _page(app: RobotApplication, notice: str = "") -> bytes:
@@ -66,9 +87,10 @@ def _page(app: RobotApplication, notice: str = "") -> bytes:
 </main><dialog id="viewer"><button onclick="viewer.close()">Close</button><h2 id="mediaTitle"></h2><img id="mediaImage"><p id="mediaDescription"></p></dialog><script>
 function showMedia(card){{const{{uri,title,description}}=card.dataset;mediaTitle.textContent=title;mediaImage.src=uri;mediaImage.alt=description||title;mediaDescription.textContent=description;viewer.showModal()}}
 chat.scrollTop=chat.scrollHeight;const talk=document.getElementById('talkButton'),status=document.getElementById('voiceStatus');let recorder,chunks=[],stream;
-async function startTalking(event){{event.preventDefault();if(recorder?.state==='recording')return;try{{stream=await navigator.mediaDevices.getUserMedia({{audio:true}});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{{if(e.data.size)chunks.push(e.data)}};recorder.onstop=sendAudio;recorder.start();talk.classList.add('recording');talk.textContent='Listening… release to send';status.textContent='Listening. Release the button when finished.'}}catch(e){{status.textContent='Microphone unavailable. Check browser permission and HTTPS.'}}}}
+async function setRobotStatus(state){{try{{await fetch('/api/status',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{state}})}})}}catch(e){{}}}}
+async function startTalking(event){{event.preventDefault();if(recorder?.state==='recording')return;try{{stream=await navigator.mediaDevices.getUserMedia({{audio:true}});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{{if(e.data.size)chunks.push(e.data)}};recorder.onstop=sendAudio;recorder.start();setRobotStatus('listening');talk.classList.add('recording');talk.textContent='Listening… release to send';status.textContent='Listening. Release the button when finished.'}}catch(e){{status.textContent='Microphone unavailable. Check browser permission and HTTPS.'}}}}
 function stopTalking(event){{event.preventDefault();if(recorder?.state==='recording')recorder.stop()}}
-async function sendAudio(){{talk.classList.remove('recording');talk.disabled=true;talk.textContent='Thinking…';status.textContent='Turning speech into text…';stream?.getTracks().forEach(t=>t.stop());try{{const blob=new Blob(chunks,{{type:recorder.mimeType||'audio/webm'}});const bytes=new Uint8Array(await blob.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const response=await fetch('/api/voice',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{audio:btoa(binary),content_type:blob.type}})}});const data=await response.json();if(!response.ok)throw new Error(data.error||'Voice request failed');appendTurn('user','You',data.transcript);appendTurn('assistant','Companion',data.reply);status.textContent='FRED said: '+data.reply;speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(data.reply);utterance.rate=.9;speechSynthesis.speak(utterance)}}catch(e){{status.textContent=e.message}}finally{{talk.disabled=false;talk.textContent='Hold to talk'}}}}
+async function sendAudio(){{talk.classList.remove('recording');talk.disabled=true;talk.textContent='Thinking…';status.textContent='Turning speech into text…';stream?.getTracks().forEach(t=>t.stop());try{{const blob=new Blob(chunks,{{type:recorder.mimeType||'audio/webm'}});const bytes=new Uint8Array(await blob.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const response=await fetch('/api/voice',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{audio:btoa(binary),content_type:blob.type}})}});const data=await response.json();if(!response.ok)throw new Error(data.error||'Voice request failed');appendTurn('user','You',data.transcript);appendTurn('assistant','Companion',data.reply);status.textContent='FRED said: '+data.reply;speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(data.reply);utterance.rate=.9;utterance.onend=()=>setRobotStatus('idle');speechSynthesis.speak(utterance)}}catch(e){{status.textContent=e.message;setRobotStatus('alert')}}finally{{talk.disabled=false;talk.textContent='Hold to talk'}}}}
 function appendTurn(role,label,text){{const div=document.createElement('div');div.className='turn '+role;const b=document.createElement('b');b.textContent=label;div.append(b,document.createTextNode(text));chat.append(div);chat.scrollTop=chat.scrollHeight}}
 for(const event of ['pointerdown'])talk.addEventListener(event,startTalking);for(const event of ['pointerup','pointercancel','pointerleave'])talk.addEventListener(event,stopTalking);
 </script></body></html>"""
@@ -113,6 +135,13 @@ def make_handler(app: RobotApplication):
                     self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST); return
                 except Exception:
                     self._json({"error": "Speech processing failed. Please try again or type a message."}, HTTPStatus.BAD_GATEWAY); return
+            if self.path == "/api/status":
+                try:
+                    payload = json.loads(self.rfile.read(min(declared_length, 1024)))
+                    app.set_status(str(payload["state"]))
+                    self._json({"ok": True}); return
+                except (KeyError, ValueError, json.JSONDecodeError) as error:
+                    self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST); return
             length = min(declared_length, 16_384)
             form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode()).items()}
             try:
@@ -144,8 +173,8 @@ def make_handler(app: RobotApplication):
     return Handler
 
 
-def serve(data_dir: str = "data", host: str = "127.0.0.1", port: int = 8080, open_browser: bool = False, certfile: str | None = None, keyfile: str | None = None) -> None:
-    app = RobotApplication(Path(data_dir))
+def serve(data_dir: str = "data", host: str = "127.0.0.1", port: int = 8080, open_browser: bool = False, certfile: str | None = None, keyfile: str | None = None, pico_device: str | None = None) -> None:
+    app = RobotApplication(Path(data_dir), pico_device)
     server = ThreadingHTTPServer((host, port), make_handler(app))
     if certfile and keyfile:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -168,4 +197,6 @@ def serve(data_dir: str = "data", host: str = "127.0.0.1", port: int = 8080, ope
         pass
     finally:
         stop.set()
+        if app.pico:
+            app.pico.close()
         server.server_close()

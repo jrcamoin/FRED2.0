@@ -74,11 +74,13 @@ browser / speech / buttons / sensors
 
 The domain layer contains care behavior, while protocol interfaces in `ports.py` isolate vendor-specific hardware. A Raspberry Pi or robot controller can implement `Speaker`, `MediaDisplay`, and `CaregiverNotifier`; buttons and sensors can call the same coordinator and scheduler methods used by the web interface.
 
+For the Raspberry Pi 2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Start the Pico bridge with `--pico /dev/ttyACM0`.
+
 ## Current prototype limitations
 
 - “Caregiver notification” prints to the console and is not a reliable alert. Spoken conversation responses use the tablet browser's installed voice.
 - Photo URLs may disclose the viewer's IP to the image host. Local upload/copy support is the next privacy milestone.
-- The web server is intentionally bound to localhost with no authentication. Do not expose it to a network.
+- The web server defaults to localhost and has no authentication. Do not expose it to a public or untrusted network.
 - Reminders are one-time only and use the device's local timezone at entry.
 - SQLite is not encrypted. Do not store sensitive health data in this prototype.
 

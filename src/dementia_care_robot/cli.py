@@ -24,6 +24,7 @@ def main() -> None:
     web.add_argument("--open", action="store_true", dest="open_browser")
     web.add_argument("--certfile", help="TLS certificate required for microphone access from another device")
     web.add_argument("--keyfile", help="TLS private key")
+    web.add_argument("--pico", help="Pico USB serial device, for example /dev/ttyACM0")
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
@@ -31,7 +32,7 @@ def main() -> None:
         from .web import serve
         if bool(args.certfile) != bool(args.keyfile):
             parser.error("--certfile and --keyfile must be supplied together")
-        serve(args.data_dir, args.host, args.port, args.open_browser, args.certfile, args.keyfile)
+        serve(args.data_dir, args.host, args.port, args.open_browser, args.certfile, args.keyfile, args.pico)
 
 
 if __name__ == "__main__":
