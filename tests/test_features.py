@@ -1,13 +1,16 @@
 import tempfile
 import unittest
+from io import BytesIO
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from dementia_care_robot.conversation import ConversationService, OfflineCompanion
 from dementia_care_robot.coordinator import CareCoordinator
 from dementia_care_robot.models import FamiliarMedia, Reminder, RiskLevel
 from dementia_care_robot.scheduler import ReminderScheduler
 from dementia_care_robot.storage import SQLiteStore
+from dementia_care_robot.speech import OpenAITranscriber
 
 
 class FakeSpeaker:
@@ -61,6 +64,30 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(len(self.store.conversation()), 2)
         self.store.clear_conversation()
         self.assertEqual(self.store.conversation(), [])
+
+    def test_transcriber_sends_multipart_audio(self):
+        class Response(BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *args): self.close()
+
+        captured = {}
+
+        def fake_open(request, timeout):
+            captured["request"], captured["timeout"] = request, timeout
+            return Response(b'{"text":"Hello FRED"}')
+
+        with patch("dementia_care_robot.speech.urlopen", fake_open):
+            result = OpenAITranscriber("secret", model="whisper-1").transcribe(b"audio-data", "audio/webm")
+        request = captured["request"]
+        self.assertEqual(result, "Hello FRED")
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+        self.assertIn(b'name="model"', request.data)
+        self.assertIn(b"whisper-1", request.data)
+        self.assertIn(b"audio-data", request.data)
+
+    def test_transcriber_rejects_empty_audio(self):
+        with self.assertRaisesRegex(ValueError, "No audio"):
+            OpenAITranscriber("secret").transcribe(b"")
 
 
 if __name__ == "__main__": unittest.main()

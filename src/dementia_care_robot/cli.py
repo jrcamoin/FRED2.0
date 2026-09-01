@@ -22,12 +22,16 @@ def main() -> None:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8080)
     web.add_argument("--open", action="store_true", dest="open_browser")
+    web.add_argument("--certfile", help="TLS certificate required for microphone access from another device")
+    web.add_argument("--keyfile", help="TLS private key")
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
     elif args.command == "web":
         from .web import serve
-        serve(args.data_dir, args.host, args.port, args.open_browser)
+        if bool(args.certfile) != bool(args.keyfile):
+            parser.error("--certfile and --keyfile must be supplied together")
+        serve(args.data_dir, args.host, args.port, args.open_browser, args.certfile, args.keyfile)
 
 
 if __name__ == "__main__":
