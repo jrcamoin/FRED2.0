@@ -1,6 +1,6 @@
 from typing import Protocol, Sequence
 
-from .models import Assessment, ConversationTurn, FamiliarMedia
+from .models import Assessment, CareProfile, ConversationTurn, FamiliarMedia
 
 
 class Speaker(Protocol):
@@ -16,4 +16,4 @@ class MediaDisplay(Protocol):
 
 
 class LanguageModel(Protocol):
-    def reply(self, history: Sequence[ConversationTurn]) -> str: ...
+    def reply(self, history: Sequence[ConversationTurn], profile: CareProfile | None = None) -> str: ...

@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import ConversationTurn, FamiliarMedia, Reminder
+from .models import CareProfile, ConversationTurn, FamiliarMedia, Reminder
 
 
 class SQLiteStore:
@@ -41,6 +41,12 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS conversation (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL,
                     content TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS care_profile (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    preferred_name TEXT NOT NULL, important_people TEXT NOT NULL,
+                    interests TEXT NOT NULL, daily_routine TEXT NOT NULL,
+                    comforts TEXT NOT NULL, usual_item_locations TEXT NOT NULL
                 );
             """)
 
@@ -94,3 +100,26 @@ class SQLiteStore:
     def clear_conversation(self) -> None:
         with self._database() as db:
             db.execute("DELETE FROM conversation")
+
+    def save_care_profile(self, profile: CareProfile) -> None:
+        with self._database() as db:
+            db.execute(
+                """INSERT OR REPLACE INTO care_profile(
+                    id, preferred_name, important_people, interests, daily_routine,
+                    comforts, usual_item_locations
+                ) VALUES (1, ?, ?, ?, ?, ?, ?)""",
+                (
+                    profile.preferred_name, profile.important_people, profile.interests,
+                    profile.daily_routine, profile.comforts, profile.usual_item_locations,
+                ),
+            )
+
+    def care_profile(self) -> CareProfile:
+        with self._database() as db:
+            row = db.execute("SELECT * FROM care_profile WHERE id = 1").fetchone()
+        if row is None:
+            return CareProfile()
+        return CareProfile(
+            row["preferred_name"], row["important_people"], row["interests"],
+            row["daily_routine"], row["comforts"], row["usual_item_locations"],
+        )

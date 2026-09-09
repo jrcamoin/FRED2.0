@@ -33,6 +33,16 @@ class ConversationTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class CareProfile:
+    preferred_name: str = ""
+    important_people: str = ""
+    interests: str = ""
+    daily_routine: str = ""
+    comforts: str = ""
+    usual_item_locations: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CheckIn:
     response: str | None
     at: datetime

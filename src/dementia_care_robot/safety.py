@@ -47,6 +47,15 @@ class SafetyPolicy:
     def assess_conversation(self, check_in: CheckIn) -> Assessment:
         """Screen free conversation without treating every open-ended answer as a missed check-in."""
         response = (check_in.response or "").strip()
+        # Requests such as "help me find my keys" are ordinary assistance, not
+        # evidence of immediate danger. Other urgent words still take priority.
+        finding_request = re.search(
+            r"\bhelp me (?:find|look for|locate)\b.*\b(keys?|glasses|spectacles|phone|mobile|wallet|purse|remote)\b",
+            response,
+            re.IGNORECASE,
+        )
+        if finding_request and not re.search(r"\b(fell|fall|chest pain|can't breathe|cannot breathe|bleeding|fire)\b", response, re.IGNORECASE):
+            return Assessment(RiskLevel.ROUTINE, "An everyday assistance request was detected.", "")
         if self._urgent.search(response) or self._caregiver.search(response):
             return self.assess(check_in)
         return Assessment(RiskLevel.ROUTINE, "No explicit safety concern detected.", "")

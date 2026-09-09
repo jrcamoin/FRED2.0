@@ -27,23 +27,31 @@ dementia-care-robot web --open
 python -m unittest discover -s tests -v
 ```
 
-Open `http://127.0.0.1:8080` if the browser does not open automatically. The dashboard lets you schedule reminders, add familiar images by URL, and talk or type to FRED. Data is stored under `data/`, which is ignored by Git. The console acts as the current caregiver notification hardware.
+Open `http://127.0.0.1:8080` if the browser does not open automatically. The dashboard lets you schedule reminders, add familiar images by URL, create a caregiver-provided Care Profile, and talk or type to FRED. Profile details such as routines, comforting interests, and usual item locations are used when relevant so FRED can give more familiar, practical answers. Data is stored under `data/`, which is ignored by Git. The console acts as the current caregiver notification hardware.
 
 ## Optional LLM conversation
 
-Without configuration, conversation uses a predictable local fallback so the model works offline. To use an OpenAI-compatible chat-completions endpoint, set:
+Without configuration, conversation uses a predictable local fallback so the model works offline. To enable generated chat and voice transcription, copy the example configuration once:
 
 ```bash
-export ROBOT_LLM_API_KEY="your-key"
-export ROBOT_LLM_MODEL="gpt-4.1-mini"       # optional
-export ROBOT_LLM_ENDPOINT="https://api.openai.com/v1/chat/completions"  # optional
-export ROBOT_TRANSCRIPTION_MODEL="whisper-1" # optional
+cp .env.example .env
+# Open .env and replace your-api-key-here with your actual API key.
 dementia-care-robot web
 ```
 
+The local `.env` file is loaded automatically and ignored by Git. Values already exported in the shell take priority. The model and endpoint settings in `.env.example` are optional defaults.
+
+To test without making any paid API calls, keep the saved key and explicitly start in offline mode:
+
+```bash
+dementia-care-robot web --offline
+```
+
+In offline testing mode, the **Hold to speak** button uses the browser's built-in speech recognition and sends only the resulting text to the local companion. This makes no OpenAI API calls. Browser speech recognition availability and whether processing stays on-device depend on the browser and operating system.
+
 Press and hold **Hold to talk**, speak, and release. The browser sends that single clip to the local server, which transcribes it, safety-checks the text, generates a response, and returns it to the tablet. The tablet displays both sides and reads FRED's response aloud. There is no always-on recording.
 
-Conversation text and recorded clips are sent to the configured provider only when `ROBOT_LLM_API_KEY` is present. Audio is not saved locally, but the transcript is retained in the local conversation history until **Clear private conversation** is pressed. Explicit danger or distress is screened before the conversation model call; urgent messages use a fixed safety response. Model/network failures fall back locally. For a real deployment, replace environment-variable API keys with a device secret store and obtain explicit consent before sending data remotely.
+Conversation text and recorded clips are sent to the configured provider only when `ROBOT_LLM_API_KEY` is present. Audio is not saved locally, but the transcript is retained in the local conversation history until **Clear private conversation** is pressed. Explicit danger or distress is screened before the conversation model call; urgent messages use a fixed safety response. API failures are reported rather than disguised as generated replies. For a real deployment, replace the `.env` key with a device secret store and obtain explicit consent before sending data remotely.
 
 ## Display on a tablet
 

@@ -3,6 +3,9 @@ import os
 import secrets
 from urllib.request import Request, urlopen
 
+from .api_errors import explain_api_error
+from .config import offline_mode
+
 
 class SpeechNotConfigured(RuntimeError):
     pass
@@ -16,6 +19,8 @@ class OpenAITranscriber:
 
     @classmethod
     def from_environment(cls) -> "OpenAITranscriber | None":
+        if offline_mode():
+            return None
         key = os.environ.get("ROBOT_LLM_API_KEY")
         if not key:
             return None
@@ -40,8 +45,11 @@ class OpenAITranscriber:
             data=b"".join(parts),
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
-        with urlopen(request, timeout=45) as response:
-            result = json.load(response)
+        try:
+            with urlopen(request, timeout=45) as response:
+                result = json.load(response)
+        except Exception as error:
+            raise explain_api_error(error, "Speech") from error
         text = str(result.get("text", "")).strip()
         if not text:
             raise ValueError("No speech was detected")

@@ -1,7 +1,9 @@
 import argparse
+import os
 from datetime import UTC, datetime
 
 from .adapters import ConsoleCaregiverNotifier, ConsoleSpeaker
+from .config import load_dotenv
 from .coordinator import CareCoordinator
 from .models import CheckIn, Reminder
 
@@ -14,6 +16,7 @@ def run_demo() -> None:
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Dementia care robot prototype")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="run a console interaction")
@@ -25,10 +28,13 @@ def main() -> None:
     web.add_argument("--certfile", help="TLS certificate required for microphone access from another device")
     web.add_argument("--keyfile", help="TLS private key")
     web.add_argument("--pico", help="Pico USB serial device, for example /dev/ttyACM0")
+    web.add_argument("--offline", action="store_true", help="disable remote API calls and use the local testing companion")
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
     elif args.command == "web":
+        if args.offline:
+            os.environ["ROBOT_OFFLINE_MODE"] = "1"
         from .web import serve
         if bool(args.certfile) != bool(args.keyfile):
             parser.error("--certfile and --keyfile must be supplied together")
