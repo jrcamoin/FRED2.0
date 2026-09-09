@@ -6,7 +6,7 @@ from typing import Sequence
 from urllib.request import Request, urlopen
 
 from .api_errors import explain_api_error
-from .config import offline_mode
+from .config import local_ai_mode, offline_mode
 from .models import CareProfile, CheckIn, ConversationTurn, RiskLevel
 from .ports import CaregiverNotifier, LanguageModel
 from .safety import SafetyPolicy
@@ -80,6 +80,12 @@ class OpenAICompatibleModel:
     def from_environment(cls) -> "OpenAICompatibleModel | None":
         if offline_mode():
             return None
+        if local_ai_mode():
+            return cls(
+                "ollama",
+                os.environ.get("ROBOT_LOCAL_MODEL", "llama3.2:3b"),
+                os.environ.get("ROBOT_LOCAL_ENDPOINT", "http://127.0.0.1:11434/v1/chat/completions"),
+            )
         key = os.environ.get("ROBOT_LLM_API_KEY")
         if not key:
             return None
@@ -98,12 +104,13 @@ class OpenAICompatibleModel:
                 profile_text = "\nCaregiver-provided care profile (use only when relevant; do not invent missing details):\n" + "\n".join(provided)
         payload = json.dumps({"model": self.model, "temperature": 0.4, "messages": [{"role": "system", "content": self.SYSTEM_PROMPT + profile_text}] + [{"role": turn.role, "content": turn.content} for turn in history]}).encode()
         request = Request(self.endpoint, data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
+        local = self.endpoint.startswith(("http://127.0.0.1", "http://localhost"))
         try:
-            with urlopen(request, timeout=20) as response:
+            with urlopen(request, timeout=120 if local else 20) as response:
                 result = json.load(response)
             return str(result["choices"][0]["message"]["content"]).strip()
         except Exception as error:
-            raise explain_api_error(error, "Conversation") from error
+            raise explain_api_error(error, "Local AI" if local else "Conversation") from error
 
 
 class ConversationService:

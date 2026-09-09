@@ -28,13 +28,18 @@ def main() -> None:
     web.add_argument("--certfile", help="TLS certificate required for microphone access from another device")
     web.add_argument("--keyfile", help="TLS private key")
     web.add_argument("--pico", help="Pico USB serial device, for example /dev/ttyACM0")
-    web.add_argument("--offline", action="store_true", help="disable remote API calls and use the local testing companion")
+    mode = web.add_mutually_exclusive_group()
+    mode.add_argument("--offline", action="store_true", help="disable model API calls and use the built-in testing companion")
+    mode.add_argument("--local-ai", action="store_true", help="generate replies locally with Ollama (default model: llama3.2:3b)")
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
     elif args.command == "web":
         if args.offline:
             os.environ["ROBOT_OFFLINE_MODE"] = "1"
+        elif args.local_ai:
+            os.environ["ROBOT_OFFLINE_MODE"] = "0"
+            os.environ["ROBOT_LOCAL_AI"] = "1"
         from .web import serve
         if bool(args.certfile) != bool(args.keyfile):
             parser.error("--certfile and --keyfile must be supplied together")

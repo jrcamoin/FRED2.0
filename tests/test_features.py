@@ -64,9 +64,17 @@ class FeatureTests(unittest.TestCase):
         with patch.dict("os.environ", {"ROBOT_OFFLINE_MODE": "true"}, clear=True):
             app = RobotApplication(Path(self.temp.name) / "offline-data")
             page = _page(app).decode()
-        self.assertIn('data-generated="false"', page)
+        self.assertIn('data-server-transcription="false"', page)
         self.assertIn("window.SpeechRecognition||window.webkitSpeechRecognition", page)
-        self.assertIn("No OpenAI charges", page)
+        self.assertIn("No OpenAI transcription charges", page)
+
+    def test_local_ai_uses_ollama_without_remote_transcription(self):
+        with patch.dict("os.environ", {"ROBOT_LOCAL_AI": "true"}, clear=True):
+            model = OpenAICompatibleModel.from_environment()
+            self.assertIsNotNone(model)
+            self.assertEqual(model.model, "llama3.2:3b")
+            self.assertEqual(model.endpoint, "http://127.0.0.1:11434/v1/chat/completions")
+            self.assertIsNone(OpenAITranscriber.from_environment())
 
     def test_media_round_trip(self):
         media = FamiliarMedia("family", "Family picnic", "https://example.test/pic.jpg", description="Family at the park")
@@ -172,6 +180,13 @@ class FeatureTests(unittest.TestCase):
         with patch("dementia_care_robot.speech.urlopen", side_effect=error):
             with self.assertRaisesRegex(RemoteServiceError, "API key was rejected"):
                 OpenAITranscriber("bad-key").transcribe(b"audio", "audio/webm")
+
+    def test_local_ai_timeout_explains_how_to_start_ollama(self):
+        from dementia_care_robot.api_errors import explain_api_error
+
+        error = explain_api_error(TimeoutError(), "Local AI")
+        self.assertIn("Ollama", str(error))
+        self.assertIn("two minutes", str(error))
 
     def test_pico_bridge_sends_led_state_and_parses_switches(self):
         events = []

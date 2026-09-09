@@ -25,3 +25,7 @@ def load_dotenv(path: str | Path = ".env") -> None:
 
 def offline_mode() -> bool:
     return os.environ.get("ROBOT_OFFLINE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def local_ai_mode() -> bool:
+    return os.environ.get("ROBOT_LOCAL_AI", "").strip().lower() in {"1", "true", "yes", "on"}

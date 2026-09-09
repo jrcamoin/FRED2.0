@@ -47,6 +47,15 @@ To test without making any paid API calls, keep the saved key and explicitly sta
 dementia-care-robot web --offline
 ```
 
+For generated replies without API charges, run the installed Ollama service and use local AI mode:
+
+```bash
+ollama serve
+dementia-care-robot web --local-ai
+```
+
+Local AI mode defaults to `llama3.2:3b`. Override it with `ROBOT_LOCAL_MODEL` when another Ollama model is installed. Safety screening still happens locally before the model is called.
+
 In offline testing mode, the **Hold to speak** button uses the browser's built-in speech recognition and sends only the resulting text to the local companion. This makes no OpenAI API calls. Browser speech recognition availability and whether processing stays on-device depend on the browser and operating system.
 
 Press and hold **Hold to talk**, speak, and release. The browser sends that single clip to the local server, which transcribes it, safety-checks the text, generates a response, and returns it to the tablet. The tablet displays both sides and reads FRED's response aloud. There is no always-on recording.

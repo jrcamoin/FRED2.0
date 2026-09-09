@@ -26,5 +26,7 @@ def explain_api_error(error: Exception, feature: str) -> RemoteServiceError:
             message += f" {detail[:240]}"
         return RemoteServiceError(message)
     if isinstance(error, (URLError, TimeoutError)):
+        if feature == "Local AI":
+            return RemoteServiceError("Local AI did not respond. Make sure Ollama is running, then try again; the first reply can take up to two minutes while the model loads.")
         return RemoteServiceError(f"{feature} service could not be reached. Check the internet connection and try again.")
     return RemoteServiceError(f"{feature} processing failed. Check the server terminal for details.")

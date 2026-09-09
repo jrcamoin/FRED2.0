@@ -4,7 +4,7 @@ import secrets
 from urllib.request import Request, urlopen
 
 from .api_errors import explain_api_error
-from .config import offline_mode
+from .config import local_ai_mode, offline_mode
 
 
 class SpeechNotConfigured(RuntimeError):
@@ -19,7 +19,7 @@ class OpenAITranscriber:
 
     @classmethod
     def from_environment(cls) -> "OpenAITranscriber | None":
-        if offline_mode():
+        if offline_mode() or local_ai_mode():
             return None
         key = os.environ.get("ROBOT_LLM_API_KEY")
         if not key:
