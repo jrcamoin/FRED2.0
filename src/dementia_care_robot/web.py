@@ -1,393 +1,209 @@
-import base64
-import html
-import json
-import mimetypes
-import ssl
-import threading
-import uuid
-import webbrowser
+import base64, html, json, mimetypes, os, shutil, socket, ssl, subprocess, threading, uuid, webbrowser
 from datetime import UTC, datetime
+from email.parser import BytesParser
+from email.policy import default
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse, quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from .api_errors import RemoteServiceError
-from .adapters import ConsoleCaregiverNotifier, ConsoleSpeaker
+from .adapters import ConsoleSpeaker
 from .conversation import ConversationService, OfflineCompanion, OpenAICompatibleModel
 from .coordinator import CareCoordinator
 from .hardware import PicoBridge
-from .models import Assessment, CareProfile, FamiliarMedia, Reminder, RiskLevel
+from .models import Assessment, CareProfile, CaregiverContact, FamiliarMedia, Reminder, ReminderStatus, RiskLevel
+from .notifications import DeliveryNotifier
 from .scheduler import ReminderScheduler
+from .security import DeviceSecrets
 from .speech import OpenAITranscriber, SpeechNotConfigured
 from .storage import SQLiteStore
 
+CSS="""*{box-sizing:border-box}body{margin:0;background:#f1f5f7;color:#193247;font:17px/1.5 system-ui,sans-serif}header{background:#16344d;color:white;padding:18px 5vw;display:flex;justify-content:space-between;align-items:center}header a{color:white}main{max-width:1100px;margin:24px auto;padding:0 18px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}.card{background:white;border:1px solid #d8e2e7;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 4px 18px #16344d0d}h1,h2,h3{margin-top:0}button,.button{border:0;border-radius:12px;background:#14766e;color:white;font-weight:750;padding:13px 18px;min-height:48px;cursor:pointer;text-decoration:none;display:inline-block}button.danger{background:#a3342c}input,select,textarea{width:100%;padding:11px;border:1px solid #aebec8;border-radius:9px;font:inherit;margin:5px 0 12px}label{font-weight:700}.muted{color:#607484;font-size:.88rem}.notice{background:#fff3ca;border-left:5px solid #dfaa2b;padding:12px;margin-bottom:18px}.status{display:inline-block;border-radius:99px;background:#e6f4f1;padding:4px 10px}.reminder{border-top:1px solid #dce5e9;padding:14px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.gallery img{width:100%;height:150px;object-fit:cover;border-radius:10px}.chat{height:300px;overflow:auto;background:#f7fafb;padding:12px;border-radius:12px}.turn{margin:8px;padding:10px;background:#e7f1f6;border-radius:10px}.turn.user{background:#173a56;color:white;margin-left:20%}.talk{font-size:1.15rem;width:100%;background:#bd443b}.actions{display:flex;gap:10px;flex-wrap:wrap}.metric{font-size:2rem;font-weight:800}.steps{display:flex;gap:8px;margin-bottom:18px}.steps span{background:#e4ecef;padding:6px 11px;border-radius:99px}.steps .active{background:#14766e;color:white}@media(max-width:760px){.grid{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start;gap:10px}.actions{flex-direction:column}}"""
+
+def _layout(title, body, caregiver=False):
+    link='<a href="/">Resident screen</a>' if caregiver else '<a href="/caregiver">Caregiver</a>'
+    return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><style>{CSS}</style></head><body><header><b>FRED Care Companion</b>{link}</header><main>{body}</main></body></html>'.encode()
 
 class RobotApplication:
-    def __init__(self, data_dir: Path, pico_device: str | None = None) -> None:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        self.media_dir = data_dir / "media"
-        self.media_dir.mkdir(exist_ok=True)
-        self.store = SQLiteStore(data_dir / "robot.db")
-        notifier, speaker = ConsoleCaregiverNotifier(), ConsoleSpeaker()
-        self.notifier = notifier
-        self.scheduler = ReminderScheduler(self.store, CareCoordinator(speaker, notifier))
-        model = OpenAICompatibleModel.from_environment() or OfflineCompanion()
-        self.generated_responses = isinstance(model, OpenAICompatibleModel)
-        self.response_mode = "local" if self.generated_responses and model.endpoint.startswith("http://127.0.0.1:11434") else "openai" if self.generated_responses else "offline"
-        self.conversation = ConversationService(self.store, model, notifier)
-        self.transcriber = OpenAITranscriber.from_environment()
-        self.server_transcription = self.transcriber is not None
-        self.pico = PicoBridge(pico_device, self._hardware_event) if pico_device else None
-        if self.pico:
-            self.pico.start()
-
-    def _hardware_event(self, switch: str, action: str) -> None:
-        if switch == "help" and action == "press":
-            assessment = Assessment(RiskLevel.URGENT, "The physical help switch was pressed.", "I am alerting your configured support person.")
-            self.notifier.notify(assessment)
-            self.set_status("alert")
-
-    def set_status(self, state: str) -> None:
-        if self.pico:
-            self.pico.set_led(state)
-
-    def voice_turn(self, audio: bytes, content_type: str) -> tuple[str, str, str]:
-        if self.transcriber is None:
-            raise SpeechNotConfigured("Voice transcription is unavailable in offline mode. Please type a message while testing.")
+    def __init__(self,data_dir:Path,pico_device=None):
+        data_dir.mkdir(parents=True,exist_ok=True); self.data_dir=data_dir; self.media_dir=data_dir/"media"; self.media_dir.mkdir(exist_ok=True)
+        self.secrets=DeviceSecrets(data_dir); self.store=SQLiteStore(data_dir/"robot.db",self.secrets)
+        self.notifier=DeliveryNotifier(self.store); self.scheduler=ReminderScheduler(self.store,CareCoordinator(ConsoleSpeaker(),self.notifier))
+        model=OpenAICompatibleModel.from_environment() or OfflineCompanion(); self.generated_responses=isinstance(model,OpenAICompatibleModel); self.response_mode="online" if self.generated_responses else "offline"
+        self.conversation=ConversationService(self.store,model,self.notifier); self.transcriber=OpenAITranscriber.from_environment(); self.server_transcription=self.transcriber is not None
+        self.started_at=datetime.now(UTC); self.pico=PicoBridge(pico_device,self._hardware_event) if pico_device else None
+        if self.pico:self.pico.start()
+        self.store.record_health("boot","ok")
+    def _hardware_event(self,switch,action):
+        if switch=="help" and action=="press": self.notifier.notify(Assessment(RiskLevel.URGENT,"The physical help switch was pressed.","I am alerting your configured support person.")); self.set_status("alert")
+        if switch=="action" and action=="press":
+            delivered=[r for r in self.store.list_reminders(True) if r.status==ReminderStatus.DELIVERED]
+            if delivered:self.store.acknowledge_reminder(delivered[-1].reminder_id,ReminderStatus.ACKNOWLEDGED,datetime.now(UTC)); self.set_status("idle")
+    def set_status(self,state):
+        if self.pico:self.pico.set_led(state)
+    def voice_turn(self,audio,content_type):
+        if not self.transcriber:raise SpeechNotConfigured("Voice transcription is unavailable. Please type while testing.")
         self.set_status("thinking")
         try:
-            transcript = self.transcriber.transcribe(audio, content_type)
-            reply, risk = self.conversation.respond(transcript)
-            self.set_status("alert" if risk is RiskLevel.URGENT else "speaking")
-            return transcript, reply, risk.value
-        except Exception:
-            self.set_status("alert")
-            raise
-
-
-def _page(app: RobotApplication, notice: str = "") -> bytes:
-    reminders = app.store.list_reminders()
-    media = app.store.list_media()
-    turns = app.store.conversation()
-    profile = app.store.care_profile()
-    reminder_cards = "".join(
-        f'<li><strong>{html.escape(r.message)}</strong><time>{html.escape(r.due_at.astimezone().strftime("%b %d, %I:%M %p"))}</time></li>'
-        for r in reminders
-    ) or "<li>No upcoming reminders.</li>"
-    media_cards = "".join(
-        f'<button class="media-card" data-uri="{html.escape(m.uri, quote=True)}" data-title="{html.escape(m.title, quote=True)}" data-description="{html.escape(m.description, quote=True)}" onclick="showMedia(this)">'
-        f'<img src="{html.escape(m.uri, quote=True)}" alt="{html.escape(m.description or m.title, quote=True)}"><span>{html.escape(m.title)}</span></button>'
-        for m in media
-    ) or '<p class="empty">Add a familiar image using a URL, or place image files in the data/media folder.</p>'
-    chat = "".join(f'<div class="turn {t.role}"><b>{"You" if t.role == "user" else "Companion"}</b>{html.escape(t.content)}</div>' for t in turns)
-    document = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FRED Care Companion</title><style>
-:root{{--navy:#17324d;--navy-dark:#10263b;--teal:#16766f;--teal-dark:#105d58;--mint:#e8f5f2;--blue-soft:#edf4fa;--coral:#c74f45;--amber:#f0b44d;--ink:#203142;--muted:#607181;--line:#dce5eb;--surface:#fff;--canvas:#f4f7f9;--shadow:0 12px 34px rgba(25,52,74,.09)}}
-*{{box-sizing:border-box}}html{{scroll-behavior:smooth}}body{{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
-button,input{{font:inherit}}button,input{{min-height:48px}}button{{cursor:pointer;border:0;border-radius:12px;padding:12px 18px;background:var(--teal);color:#fff;font-weight:750;transition:transform .15s,background .15s,box-shadow .15s}}button:hover{{background:var(--teal-dark);box-shadow:0 5px 14px rgba(16,93,88,.2)}}button:active{{transform:translateY(1px)}}button:focus-visible,input:focus-visible,summary:focus-visible{{outline:4px solid rgba(240,180,77,.55);outline-offset:2px}}button:disabled{{opacity:.55;cursor:wait}}
-.topbar{{background:linear-gradient(120deg,var(--navy-dark),var(--navy));color:#fff;border-bottom:4px solid var(--teal)}}.topbar-inner{{max-width:1240px;margin:auto;padding:20px 28px;display:flex;align-items:center;justify-content:space-between;gap:24px}}.brand{{display:flex;align-items:center;gap:14px}}.brand-mark{{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:var(--teal);font-size:1.45rem;font-weight:850;letter-spacing:-.05em}}.brand h1{{font-size:1.25rem;margin:0;letter-spacing:-.02em}}.brand p{{margin:1px 0 0;color:#c9d7e2;font-size:.84rem}}.mode-badge{{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:999px;font-size:.82rem;font-weight:700}}.mode-dot{{width:9px;height:9px;border-radius:50%;background:{'#5de0a3' if app.generated_responses else '#f0b44d'};box-shadow:0 0 0 4px rgba(255,255,255,.08)}}
-.shell{{max-width:1240px;margin:0 auto;padding:28px;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,.8fr);gap:24px;align-items:start}}.notice{{grid-column:1/-1;background:#fff7df;border:1px solid #efd597;border-left:5px solid var(--amber);padding:13px 16px;border-radius:12px;font-weight:650}}.card{{background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}}.card-head{{padding:22px 24px 14px;border-bottom:1px solid var(--line)}}.card-head h2{{margin:0;font-size:1.18rem;letter-spacing:-.015em}}.eyebrow{{margin:0 0 5px;text-transform:uppercase;letter-spacing:.09em;font-size:.71rem;color:var(--teal);font-weight:850}}.card-body{{padding:22px 24px}}.companion{{grid-row:span 2;overflow:hidden}}.companion .card-head{{background:linear-gradient(135deg,var(--blue-soft),#fff)}}.intro{{display:flex;align-items:center;gap:15px}}.avatar{{width:54px;height:54px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:850;flex:none}}.intro-copy p{{margin:3px 0 0;color:var(--muted)}}
-.voice-panel{{background:var(--mint);border:1px solid #c7e5df;border-radius:16px;padding:16px;text-align:center}}#talkButton{{width:100%;min-height:68px;font-size:1.08rem;background:var(--coral);box-shadow:0 7px 18px rgba(199,79,69,.2)}}#talkButton:hover{{background:#ad3f37}}#talkButton.recording{{animation:pulse 1s infinite;background:#a82e26}}@keyframes pulse{{50%{{transform:scale(1.015);box-shadow:0 0 0 9px rgba(199,79,69,.12)}}}}#voiceStatus{{margin:10px 0 0;color:#405d5a;font-size:.9rem;min-height:1.4em}}
-.chat{{height:360px;overflow:auto;padding:18px 4px;scrollbar-color:#afbdc7 transparent}}.chat:empty::after{{content:"Start with a simple question, memory, or request for help.";display:block;text-align:center;color:var(--muted);padding:70px 20px}}.turn{{max-width:86%;padding:12px 15px;margin:10px 0;border-radius:16px 16px 16px 4px;background:var(--blue-soft);white-space:pre-wrap}}.turn.user{{margin-left:auto;background:var(--navy);color:#fff;border-radius:16px 16px 4px 16px}}.turn b{{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;opacity:.72}}.message-form{{display:flex;gap:10px;border-top:1px solid var(--line);padding-top:18px}}.message-form label{{flex:1;margin:0}}.message-form label span{{position:absolute;width:1px;height:1px;overflow:hidden}}.message-form input{{height:52px}}.message-form button{{margin:0;min-width:90px}}.conversation-actions{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}}.link-button{{background:transparent;color:var(--muted);padding:6px 0;min-height:auto;font-size:.84rem;font-weight:650}}.link-button:hover{{background:transparent;color:var(--navy);box-shadow:none}}
-.side-stack{{display:grid;gap:24px}}.summary-list{{list-style:none;padding:0;margin:0}}.summary-list li{{padding:12px 0;border-bottom:1px solid var(--line)}}.summary-list li:last-child{{border:0}}.summary-list strong{{display:block}}time{{color:var(--muted);font-size:.84rem}}label{{display:block;margin:13px 0 0;font-size:.86rem;font-weight:750;color:#394c5c}}input{{width:100%;margin-top:5px;padding:10px 12px;border:1.5px solid #b9c7d1;border-radius:11px;background:#fff;color:var(--ink)}}input::placeholder{{color:#8796a2}}form>button{{margin-top:15px}}details.card{{overflow:hidden}}details summary{{list-style:none;cursor:pointer;padding:20px 24px;font-weight:800;display:flex;justify-content:space-between;align-items:center}}details summary::-webkit-details-marker{{display:none}}details summary::after{{content:"+";font-size:1.35rem;color:var(--teal)}}details[open] summary{{border-bottom:1px solid var(--line)}}details[open] summary::after{{content:"−"}}.helper,.warning{{font-size:.8rem;color:var(--muted)}}.warning{{padding:10px 12px;background:#fff8e8;border-radius:9px}}
-.gallery{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}.media-card{{margin:0;padding:0;overflow:hidden;background:#fff;color:var(--ink);border:1px solid var(--line);text-align:left}}.media-card:hover{{background:#fff;box-shadow:0 5px 15px rgba(25,52,74,.12)}}.media-card img{{width:100%;height:120px;object-fit:cover;display:block}}.media-card span{{display:block;padding:9px 11px;font-size:.83rem}}.empty{{grid-column:1/-1;color:var(--muted);font-size:.88rem}}dialog{{width:min(760px,90vw);border:0;border-radius:20px;padding:24px;box-shadow:0 25px 80px rgba(0,0,0,.25)}}dialog::backdrop{{background:rgba(16,38,59,.7)}}dialog img{{max-width:100%;max-height:65vh;border-radius:12px}}dialog button{{float:right;margin:0}}footer{{max-width:1240px;margin:0 auto;padding:0 28px 30px;color:var(--muted);font-size:.78rem;text-align:center}}
-@media(max-width:900px){{.shell{{grid-template-columns:1fr}}.companion{{grid-row:auto}}.side-stack{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:650px){{.topbar-inner,.shell{{padding-left:16px;padding-right:16px}}.topbar-inner{{align-items:flex-start;flex-direction:column;gap:12px}}.shell{{padding-top:16px}}.side-stack{{grid-template-columns:1fr}}.card-head,.card-body,details summary{{padding-left:18px;padding-right:18px}}.chat{{height:310px}}.message-form{{flex-direction:column}}.message-form button{{width:100%}}.turn{{max-width:94%}}}}
-</style></head><body>
-<style>
-body{{background:#eef2f6}}.topbar-inner{{max-width:1600px;padding:15px 28px}}.topbar{{border-bottom-width:2px}}.shell{{max-width:1600px;grid-template-columns:minmax(0,1fr) 350px;gap:20px;padding:20px 28px}}.companion{{grid-row:auto;height:calc(100dvh - 155px);min-height:550px;display:flex;flex-direction:column}}.companion>.card-body{{flex:1;min-height:0;display:flex;flex-direction:column;padding:16px 22px}}.chat{{flex:1;height:auto;min-height:100px}}.card-head{{padding:17px 22px}}.side-stack{{gap:16px;max-height:calc(100dvh - 155px);overflow:auto;padding-bottom:4px}}.card{{border-radius:16px;box-shadow:0 3px 16px #17324d08}}.profile{{grid-column:1/-1}}.profile form{{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}}.profile form>button{{justify-self:start}}.voice-panel{{padding:10px 14px;text-align:left}}#talkButton{{min-height:48px;background:var(--teal);box-shadow:none}}#talkButton.recording{{background:#a82e26}}#voiceStatus{{font-size:.82rem}}.voice-panel .helper{{margin:5px 0}}.turn{{overflow-wrap:anywhere}}.conversation-actions{{flex-wrap:wrap}}.tools{{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-top:10px}}.tools label{{margin:0;display:flex;gap:6px;align-items:center;font-weight:500}}.tools input{{width:16px;min-height:16px;margin:0}}.suggestions{{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}}.suggestions button{{background:#edf4fa;color:#17324d;font-size:.8rem;min-height:36px;padding:6px 12px;box-shadow:none}}.message-form input{{margin:0}}footer{{padding-bottom:16px}}@media(min-width:1000px) and (max-height:800px){{.intro-copy p:not(.eyebrow){{display:none}}.companion{{min-height:510px}}.card-body{{padding:16px 20px}}}}@media(max-width:900px){{.shell{{grid-template-columns:1fr}}.companion{{height:680px;min-height:0}}.side-stack{{max-height:none;overflow:visible}}}}@media(max-width:650px){{.shell{{padding:12px}}.companion{{height:auto;min-height:640px}}.chat{{height:270px;flex:auto}}.profile form{{grid-template-columns:1fr}}.topbar-inner{{padding:14px 18px}}}}@media(prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
-</style>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark" aria-hidden="true">F</div><div><h1>FRED Care Companion</h1><p>Supportive assistance for everyday moments</p></div></div><div class="mode-badge"><span class="mode-dot"></span>{{"local": "Local AI · no API charges", "openai": "OpenAI configured · connection unverified", "offline": "Offline companion · no API charges"}}[app.response_mode]</div></div></header>
-<main class="shell">{f'<div class="notice" role="status">{html.escape(notice)}</div>' if notice else ''}
-<section class="card companion" aria-labelledby="companion-title"><div class="card-head"><div class="intro"><div class="avatar" aria-hidden="true">FRED</div><div class="intro-copy"><p class="eyebrow">Patient experience</p><h2 id="companion-title">How can I help today?</h2><p>I can help with familiar routines, misplaced items, or simply listen.</p></div></div></div><div class="card-body">
-<div class="voice-panel"><button type="button" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" role="status" aria-live="assertive">{"Audio uses configured server transcription." if app.server_transcription else "Voice input uses your browser's speech recognition."}</p>{'' if app.server_transcription else '<p class="helper">No OpenAI transcription charges. Depending on the browser and device, speech may be processed by the browser vendor.</p>'}</div>
-<div class="chat" id="chat" aria-live="polite">{chat}</div>
-<div class="suggestions" aria-label="Example messages"><button type="button" data-prompt="I need help finding my keys">Find my keys</button><button type="button" data-prompt="What time is it?">Time &amp; date</button><button type="button" data-prompt="What is my routine?">My routine</button></div>
-<form class="message-form" id="messageForm" method="post" action="/conversation"><label><span>Message FRED</span><input id="messageInput" name="message" required autocomplete="off" placeholder="Type a question or ask for help…"></label><button>Send</button></form>
-<div class="tools"><label><input type="checkbox" id="readAloud" checked>Read replies aloud</label><button class="link-button" id="repeatReply" type="button">Repeat reply</button><button class="link-button" id="stopSpeech" type="button">Stop speaking</button></div>
-<div class="conversation-actions"><span class="helper">{"Replies use conversation and profile context." if app.generated_responses else "Offline replies use built-in guidance and your care profile."}</span><form method="post" action="/conversation/clear"><button class="link-button">Clear conversation</button></form></div></div></section>
-<aside class="side-stack" aria-label="Caregiver tools">
-<section class="card"><div class="card-head"><p class="eyebrow">Care plan</p><h2>Today’s reminders</h2></div><div class="card-body"><ul class="summary-list">{reminder_cards}</ul><details><summary>Add a reminder</summary><form method="post" action="/reminders"><label>Reminder<input name="message" maxlength="200" required placeholder="Time for a glass of water"></label><label>Date and time<input type="datetime-local" name="due_at" required></label><button>Schedule reminder</button></form></details></div></section>
-<section class="card"><div class="card-head"><p class="eyebrow">Memory support</p><h2>Familiar photos</h2></div><div class="card-body"><div class="gallery">{media_cards}</div><details><summary>Add a photo</summary><form method="post" action="/media"><label>Photo title<input name="title" maxlength="120" required></label><label>Image URL<input type="url" name="uri" required placeholder="https://…"></label><label>Who or what is pictured?<input name="description" maxlength="300"></label><button>Add familiar photo</button></form></details></div></section>
-</aside>
-<details class="card profile"><summary>Care profile · personalize assistance</summary><div class="card-body"><p class="helper">Caregiver-provided context helps FRED give familiar and practical answers. Add only consented details that improve care.</p><form method="post" action="/profile">
-<label>Preferred name<input name="preferred_name" maxlength="80" value="{html.escape(profile.preferred_name, quote=True)}" placeholder="How FRED should address the person"></label>
-<label>Important people<input name="important_people" maxlength="500" value="{html.escape(profile.important_people, quote=True)}" placeholder="Names, relationships, and reassuring contacts"></label>
-<label>Interests and favorite activities<input name="interests" maxlength="500" value="{html.escape(profile.interests, quote=True)}" placeholder="Music, hobbies, places, and memories"></label>
-<label>Daily routine<input name="daily_routine" maxlength="500" value="{html.escape(profile.daily_routine, quote=True)}" placeholder="Usual meals, activities, and rest times"></label>
-<label>Things that provide comfort<input name="comforts" maxlength="500" value="{html.escape(profile.comforts, quote=True)}" placeholder="Calming topics, objects, music, or people"></label>
-<label>Usual locations for important items<input name="usual_item_locations" maxlength="500" value="{html.escape(profile.usual_item_locations, quote=True)}" placeholder="Keys: blue bowl by the front door"></label>
-<button>Save care profile</button></form><p class="warning">Privacy note: this prototype stores profile data locally without database encryption.</p></div></details>
-</main><footer>FRED is an assistive prototype—not a person, clinician, medical device, or emergency service.</footer>
-<dialog id="viewer"><button onclick="viewer.close()">Close</button><h2 id="mediaTitle"></h2><img id="mediaImage"><p id="mediaDescription"></p></dialog><script>
-const byId = id => document.getElementById(id);
-const chat = byId('chat'), talk = byId('talkButton'), status = byId('voiceStatus');
-const messageForm = byId('messageForm'), messageInput = byId('messageInput');
-const usesServerTranscription = talk.dataset.serverTranscription === 'true';
-const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-let busy = false, phase = 'idle', recorder, recognition, stream, timer;
-let lastReply = '';
-const previousReply = chat.querySelector('.turn:not(.user):last-child');
-if (previousReply) lastReply = Array.from(previousReply.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join('');
-function showMedia(card) {{
-  byId('mediaTitle').textContent = card.dataset.title;
-  byId('mediaImage').src = card.dataset.uri;
-  byId('mediaImage').alt = card.dataset.description || card.dataset.title;
-  byId('mediaDescription').textContent = card.dataset.description;
-  byId('viewer').showModal();
-}}
-function state(next, text) {{
-  phase = next;
-  talk.classList.toggle('recording', next === 'recording');
-  talk.textContent = next === 'recording' ? 'Stop recording' : next === 'starting' ? 'Opening microphone…' : next === 'processing' ? 'Processing…' : 'Start speaking';
-  talk.disabled = next === 'starting' || next === 'processing' || (!usesServerTranscription && !SpeechRecognition);
-  talk.setAttribute('aria-pressed', String(next === 'recording'));
-  messageForm.querySelector('button').disabled = next !== 'idle';
-  if (text) status.textContent = text;
-}}
-function appendTurn(role, label, text) {{
-  const div = document.createElement('div'), b = document.createElement('b');
-  div.className = 'turn ' + role; b.textContent = label;
-  div.append(b, document.createTextNode(text)); chat.append(div);
-  chat.scrollTop = chat.scrollHeight;
-}}
-function speak(text) {{
-  if (!window.speechSynthesis || !text) return;
-  speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = .9; speechSynthesis.speak(utterance);
-}}
-function replyReceived(data) {{
-  lastReply = data.reply;
-  appendTurn('assistant', 'FRED', data.reply);
-  if (byId('readAloud').checked) speak(data.reply);
-  status.textContent = data.risk === 'routine' ? 'Ready for your next message.' : 'Support alert recorded in the server console. No external notification is configured.';
-}}
-async function request(path, payload) {{
-  const response = await fetch(path, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed. Please try again.');
-  return data;
-}}
-messageForm.addEventListener('submit', async event => {{
-  event.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text || busy || phase !== 'idle') return;
-  busy = true; state('processing', 'Preparing a response…');
-  appendTurn('user', 'You', text);
-  try {{
-    const data = await request('/api/conversation', {{message:text}});
-    messageInput.value = ''; replyReceived(data);
-  }} catch (error) {{ status.textContent = error.message; }}
-  finally {{ busy = false; state('idle'); messageInput.focus(); }}
-}});
-async function sendAudio(chunks, mime) {{
-  clearTimeout(timer); stream?.getTracks().forEach(track => track.stop());
-  state('processing', 'Transcribing your recording…'); busy = true;
-  try {{
-    const blob = new Blob(chunks, {{type:mime}});
-    if (!blob.size) throw new Error('No audio captured. Please try again.');
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = '';
-    for (let i=0; i<bytes.length; i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
-    const data = await request('/api/voice', {{audio:btoa(binary), content_type:blob.type}});
-    appendTurn('user', 'You', data.transcript); replyReceived(data);
-  }} catch(error) {{ status.textContent = error.message; }}
-  finally {{ busy = false; state('idle'); }}
-}}
-function stopRecording() {{
-  clearTimeout(timer);
-  if (phase !== 'recording') return;
-  state('processing', 'Finishing recording…');
-  if (usesServerTranscription) recorder.stop();
-  else recognition.stop();
-}}
-talk.addEventListener('click', async () => {{
-  if (phase === 'recording') {{ stopRecording(); return; }}
-  if (phase !== 'idle' || busy) return;
-  window.speechSynthesis?.cancel();
-  state('starting', 'Allow microphone access if prompted.');
-  try {{
-    if (usesServerTranscription) {{
-      stream = await navigator.mediaDevices.getUserMedia({{audio:true}});
-      const chunks = [];
-      recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = event => {{ if (event.data.size) chunks.push(event.data); }};
-      recorder.onstop = () => sendAudio(chunks, recorder.mimeType || 'audio/webm');
-      recorder.onerror = () => {{ clearTimeout(timer); stream.getTracks().forEach(t => t.stop()); state('idle', 'Recording failed. Please try again.'); }};
-      recorder.start();
-    }} else {{
-      let transcript = '', failure = '';
-      recognition = new SpeechRecognition();
-      recognition.lang = navigator.language || 'en-US';
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognition.onresult = event => {{
-        transcript = Array.from(event.results).map(result => result[0].transcript).join(' ').trim();
-        status.textContent = 'Heard: ' + transcript;
-      }};
-      recognition.onerror = event => {{
-        failure = event.error === 'not-allowed' ? 'Microphone access denied. Enable it in browser settings.' :
-          event.error === 'network' ? 'Browser speech recognition needs a network connection. You can still type below.' :
-          'Speech recognition could not finish (' + event.error + '). Please try again.';
-      }};
-      recognition.onend = () => {{
-        clearTimeout(timer); state('idle');
-        if (transcript && !failure) {{
-          messageInput.value = transcript;
-          status.textContent = 'Check the transcript below, then press Send.';
-          messageInput.focus();
-        }} else status.textContent = failure || 'No speech detected. Try again or type below.';
-      }};
-      recognition.start();
-    }}
-    state('recording', 'Listening. Click Stop recording when finished.');
-    timer = setTimeout(stopRecording, 60000);
-  }} catch(error) {{
-    stream?.getTracks().forEach(track => track.stop());
-    state('idle', 'Microphone unavailable. Check browser permissions or type below.');
-  }}
-}});
-byId('repeatReply').addEventListener('click', () => {{ if (lastReply) speak(lastReply); else status.textContent = 'Send a message first to hear a reply.'; }});
-byId('stopSpeech').addEventListener('click', () => window.speechSynthesis?.cancel());
-document.querySelector('form[action="/conversation/clear"]').addEventListener('submit', event => {{
-  if (!confirm('Delete this conversation? Your care profile will be kept.')) event.preventDefault();
-}});
-document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => {{
-  messageInput.value = button.dataset.prompt; messageInput.focus();
-}}));
-chat.scrollTop = chat.scrollHeight;
-state('idle', !usesServerTranscription && !SpeechRecognition ?
-  'Speech recognition is unavailable in this browser. Please type below.' :
-  'Click Start speaking to record, or type a message below.');
-</script></body></html>"""
-    return document.encode()
-
-
-def make_handler(app: RobotApplication):
-    class Handler(BaseHTTPRequestHandler):
-        def _redirect(self, notice: str) -> None:
-            self.send_response(HTTPStatus.SEE_OTHER)
-            self.send_header("Location", "/?notice=" + quote(notice))
-            self.end_headers()
-
-        def do_GET(self) -> None:
-            parsed = urlparse(self.path)
-            if parsed.path == "/":
-                app.scheduler.deliver_due()
-                notice = parse_qs(parsed.query).get("notice", [""])[0]
-                body = _page(app, notice)
-                self.send_response(HTTPStatus.OK); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-                return
-            if parsed.path.startswith("/local-media/"):
-                name = Path(parsed.path).name
-                path = app.media_dir / name
-                if path.is_file():
-                    body = path.read_bytes(); self.send_response(HTTPStatus.OK); self.send_header("Content-Type", mimetypes.guess_type(path)[0] or "application/octet-stream"); self.end_headers(); self.wfile.write(body); return
-            self.send_error(HTTPStatus.NOT_FOUND)
-
-        def do_POST(self) -> None:
-            declared_length = int(self.headers.get("Content-Length", "0"))
-            if self.path == "/api/conversation":
-                if not 0 < declared_length <= 16384:
-                    self._json({"error": "Message is too large or empty."}, HTTPStatus.BAD_REQUEST); return
-                try:
-                    payload = json.loads(self.rfile.read(declared_length))
-                    message = payload.get("message") if isinstance(payload, dict) else None
-                    if not isinstance(message, str) or not message.strip() or len(message) > 2000:
-                        raise ValueError("Enter a message of 1–2000 characters.")
-                    reply, risk = app.conversation.respond(message.strip())
-                    self._json({"reply": reply, "risk": risk.value}); return
-                except (ValueError, UnicodeError):
-                    self._json({"error": "Enter a valid message of 1–2000 characters."}, HTTPStatus.BAD_REQUEST); return
-                except RemoteServiceError as error:
-                    self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY); return
-            if self.path == "/api/voice":
-                if declared_length > 12_000_000:
-                    self._json({"error": "Recording is too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE); return
-                try:
-                    payload = json.loads(self.rfile.read(declared_length))
-                    audio = base64.b64decode(payload["audio"], validate=True)
-                    transcript, reply, risk = app.voice_turn(audio, str(payload.get("content_type", "audio/webm")))
-                    self._json({"transcript": transcript, "reply": reply, "risk": risk}); return
-                except SpeechNotConfigured as error:
-                    self._json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE); return
-                except RemoteServiceError as error:
-                    self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY); return
-                except (KeyError, ValueError, json.JSONDecodeError) as error:
-                    self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST); return
-                except Exception as error:
-                    print("VOICE ERROR:", repr(error))
-                    self._json({"error": "Speech processing failed. Please try again or type a message."}, HTTPStatus.BAD_GATEWAY); return
-            if self.path == "/api/status":
-                try:
-                    payload = json.loads(self.rfile.read(min(declared_length, 1024)))
-                    app.set_status(str(payload["state"]))
-                    self._json({"ok": True}); return
-                except (KeyError, ValueError, json.JSONDecodeError) as error:
-                    self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST); return
-            length = min(declared_length, 16_384)
-            form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode()).items()}
+            transcript=self.transcriber.transcribe(audio,content_type); reply,risk=self.conversation.respond(transcript); self.set_status("alert" if risk is RiskLevel.URGENT else "speaking"); return transcript,reply,risk.value
+        except Exception:self.set_status("alert");raise
+    def health(self):
+        disk=shutil.disk_usage(self.data_dir); network=False
+        try:
+            with socket.create_connection(("1.1.1.1",53),timeout=.4):network=True
+        except OSError:pass
+        power="connected"
+        supplies=Path("/sys/class/power_supply")
+        if supplies.exists():
+            online=list(supplies.glob("*/online"))
+            if online:
+                try:power="connected" if any(p.read_text().strip()=="1" for p in online) else "battery"
+                except OSError:power="unknown"
+        if shutil.which("vcgencmd"):
             try:
-                if self.path == "/reminders":
-                    local = datetime.fromisoformat(form["due_at"]).astimezone()
-                    app.scheduler.schedule(Reminder(uuid.uuid4().hex, form["message"].strip(), local))
-                    self._redirect("Reminder scheduled"); return
-                if self.path == "/media":
-                    uri = form["uri"].strip()
-                    if urlparse(uri).scheme not in ("http", "https"):
-                        raise ValueError("Image URL must use http or https")
-                    app.store.add_media(FamiliarMedia(uuid.uuid4().hex, form["title"].strip(), uri, "image", form.get("description", "").strip()))
-                    self._redirect("Familiar photo added"); return
-                if self.path == "/conversation":
-                    _, risk = app.conversation.respond(form["message"])
-                    self._redirect("Support person notified" if risk != "routine" else "Response ready"); return
-                if self.path == "/profile":
-                    fields = ("preferred_name", "important_people", "interests", "daily_routine", "comforts", "usual_item_locations")
-                    app.store.save_care_profile(CareProfile(*(form.get(field, "").strip() for field in fields)))
-                    self._redirect("Care profile saved"); return
-                if self.path == "/conversation/clear":
-                    app.store.clear_conversation(); self._redirect("Conversation cleared"); return
-            except (KeyError, ValueError) as error:
-                self.send_error(HTTPStatus.BAD_REQUEST, str(error)); return
-            except RemoteServiceError as error:
-                print("CONVERSATION ERROR:", repr(error))
-                self._redirect(str(error)); return
-            self.send_error(HTTPStatus.NOT_FOUND)
+                throttled=subprocess.run(["vcgencmd","get_throttled"],capture_output=True,text=True,timeout=2).stdout.strip()
+                if throttled not in {"throttled=0x0",""}: power="undervoltage/throttling detected"
+            except (OSError,subprocess.SubprocessError): pass
+        self.store.record_health("heartbeat","ok")
+        return {"power":power,"network":"online" if network else "offline","pico":"connected" if self.pico else "not configured","disk_free_gb":round(disk.free/1024**3,1),"uptime":str(datetime.now(UTC)-self.started_at).split('.')[0],"last_check_in":self.store.last_health("check_in")}
 
-        def _json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
-            body = json.dumps(payload).encode()
-            self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+def _page(app,notice=""):
+    media=app.store.list_media(); turns=app.store.conversation(); all_r=app.store.list_reminders(True); delivered=[r for r in all_r if r.status==ReminderStatus.DELIVERED]
+    current=delivered[-1] if delivered else None
+    reminder=(f'<div class="card"><h2>{html.escape(current.message)}</h2>{f"<audio controls autoplay src=\"{html.escape(current.voice_note_uri)}\"></audio>" if current.voice_note_uri else ""}<div class="actions"><form method="post" action="/reminder/{current.reminder_id}/ack"><button>I’ve done this</button></form><form method="post" action="/reminder/{current.reminder_id}/help"><button class="danger">I need help</button></form></div></div>' if current else '')
+    gallery=''.join(f'<figure><img src="{html.escape(m.uri)}" alt="{html.escape(m.description or m.title)}"><figcaption>{html.escape(m.title)}</figcaption></figure>' for m in media) or '<p class="muted">Your caregiver can add familiar photos.</p>'
+    chat=''.join(f'<div class="turn {t.role}"><b>{"You" if t.role=="user" else "FRED"}</b><br>{html.escape(t.content)}</div>' for t in turns)
+    body=f'{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}{reminder}<div class="grid"><section class="card"><h1>Hello. I’m FRED, your robot helper.</h1><button class="talk" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" class="muted">{"Voice is handled by this browser. No OpenAI transcription charges." if not app.server_transcription else "You can also type below."}</p><div class="chat" id="chat">{chat}</div><form id="messageForm"><input id="messageInput" required maxlength="2000" placeholder="Ask FRED something"><button>Send</button></form></section><aside><section class="card"><h2>Familiar photos</h2><div class="gallery">{gallery}</div></section><section class="card"><h2>Need a person?</h2><p>Press the physical HELP button on FRED.</p></section></aside></div><script>{_resident_js()}</script>'
+    return _layout("FRED",body)
 
-        def log_message(self, format: str, *args: object) -> None:
-            print("WEB:", format % args)
-    return Handler
+def _resident_js():
+    return """const q=x=>document.getElementById(x),chat=q('chat'),form=q('messageForm'),input=q('messageInput'),status=q('voiceStatus'),talk=q('talkButton');function add(role,text){let d=document.createElement('div');d.className='turn '+role;d.textContent=text;chat.append(d);chat.scrollTop=chat.scrollHeight}async function send(message){add('user',message);status.textContent='Thinking…';let r=await fetch('/api/conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});let d=await r.json();if(!r.ok){status.textContent=d.error;return}add('assistant',d.reply);status.textContent='Ready';speechSynthesis?.speak(new SpeechSynthesisUtterance(d.reply))}form.onsubmit=e=>{e.preventDefault();let t=input.value.trim();if(t){input.value='';send(t)}};const SR=window.SpeechRecognition||window.webkitSpeechRecognition;talk.disabled=!SR;talk.onclick=()=>{let r=new SR();r.lang=navigator.language;r.onresult=e=>{input.value=e.results[0][0].transcript;status.textContent='Check what I heard, then press Send.'};r.onerror=()=>status.textContent='I could not hear that. Please type below.';r.start();status.textContent='Listening…'};"""
 
+def _login(notice=""):
+    return _layout("Caregiver sign in",f'<section class="card" style="max-width:480px;margin:auto"><h1>Caregiver sign in</h1>{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}<form method="post" action="/login"><label>Password<input type="password" name="password" required></label><button>Sign in</button></form></section>',True)
 
-def serve(data_dir: str = "data", host: str = "127.0.0.1", port: int = 8080, open_browser: bool = False, certfile: str | None = None, keyfile: str | None = None, pico_device: str | None = None) -> None:
-    app = RobotApplication(Path(data_dir), pico_device)
-    server = ThreadingHTTPServer((host, port), make_handler(app))
-    if certfile and keyfile:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile, keyfile)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-    stop = threading.Event()
-    def scheduler_loop() -> None:
-        while not stop.wait(1):
-            app.scheduler.deliver_due()
-    scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
-    scheduler_thread.start()
-    if open_browser:
-        scheme = "https" if certfile else "http"
-        threading.Timer(0.5, lambda: webbrowser.open(f"{scheme}://{host}:{port}")).start()
-    scheme = "https" if certfile else "http"
-    print(f"Care Companion running at {scheme}://{host}:{port} (Ctrl+C to stop)")
-    try:
-        server.serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop.set()
-        if app.pico:
-            app.pico.close()
-        server.server_close()
+def _onboarding(step=1,notice=""):
+    bodies={1:'<h1>Set up FRED</h1><p>This guided setup usually takes under 15 minutes.</p><form method="post" action="/onboarding"><input type="hidden" name="step" value="1"><label>Caregiver password<input type="password" minlength="10" name="password" required></label><label>Confirm password<input type="password" minlength="10" name="confirm" required></label><button>Continue</button></form>',2:'<h1>Quiet hours</h1><form method="post" action="/onboarding"><input type="hidden" name="step" value="2"><label>Quiet starts<input type="time" name="quiet_start" value="21:00"></label><label>Quiet ends<input type="time" name="quiet_end" value="07:00"></label><button>Continue</button></form>',3:'<h1>Caregiver contact</h1><form method="post" action="/onboarding"><input type="hidden" name="step" value="3"><label>Name<input name="name" required></label><label>Alert channel<select name="channel"><option value="sms">SMS via Twilio</option><option value="push">Push webhook</option></select></label><label>Phone number or webhook URL<input name="destination" required></label><button>Finish setup</button></form>'}
+    return _layout("Set up FRED",f'<div class="steps"><span class="{"active" if step==1 else ""}">1 Security</span><span class="{"active" if step==2 else ""}">2 Schedule</span><span class="{"active" if step==3 else ""}">3 Contact</span></div>{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}<section class=card>{bodies[step]}</section>',True)
+
+def _caregiver(app,notice=""):
+    summary=app.store.daily_summary(); health=app.health(); reminders=app.store.list_reminders(True); deliveries=app.store.deliveries(); contacts=app.store.contacts()
+    rs=''.join(f'<div class=reminder><b>{html.escape(r.message)}</b><br><span class=status>{r.status.value}</span> · {r.due_at.astimezone().strftime("%b %d, %I:%M %p")} · {r.recurrence}</div>' for r in reminders) or '<p>No reminders yet.</p>'
+    ds=''.join(f'<div class=reminder><b>{d.risk.value.upper()}</b> {html.escape(d.reason)}<br>{d.status}, {d.attempts} attempt(s)</div>' for d in deliveries) or '<p>No alerts today.</p>'
+    cs=', '.join(html.escape(c.name)+" ("+html.escape(c.channel)+")" for c in contacts) or 'None configured'
+    last=health['last_check_in'].astimezone().strftime('%b %d, %I:%M %p') if health['last_check_in'] else 'No check-in yet'
+    body=f'{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}<h1>Today at a glance</h1><div class=grid><div><section class=card><div class=actions><div><div class=metric>{summary.get("acknowledged",0)}</div>Acknowledged</div><div><div class=metric>{summary.get("needs_help",0)}</div>Needed help</div><div><div class=metric>{summary.get("alerts",0)}</div>Alerts</div></div></section><section class=card><h2>Reminders</h2>{rs}<h3>Add reminder</h3><form method=post action=/reminders><label>Message<input name=message maxlength=200 required></label><label>Date and time<input type=datetime-local name=due_at required></label><label>Repeat<select name=recurrence><option value=none>Once</option><option value=daily>Daily</option><option value=weekly>Weekly</option></select></label><label>Family voice note (optional)<select name=voice_note_uri><option value="">None</option>{"".join(f"<option value=\"{html.escape(m.uri)}\">{html.escape(m.title)}</option>" for m in app.store.list_media() if m.kind=="audio")}</select></label><button>Schedule</button></form></section><section class=card><h2>Recent alert delivery</h2>{ds}</section></div><aside><section class=card><h2>Device health</h2><p>Power: <b>{health["power"]}</b><br>Network: <b>{health["network"]}</b><br>Pico: <b>{health["pico"]}</b><br>Free storage: <b>{health["disk_free_gb"]} GB</b><br>Uptime: <b>{health["uptime"]}</b><br>Last check-in: <b>{last}</b></p></section><section class=card><h2>Upload family media</h2><form method=post enctype=multipart/form-data action=/upload><label>Title<input name=title required maxlength=120></label><label>Description<input name=description maxlength=300></label><label>Photo or voice note<input type=file name=file accept="image/jpeg,image/png,image/webp,audio/webm,audio/mpeg,audio/wav" required></label><button>Encrypt and upload</button></form></section><section class=card><h2>Settings</h2><p>Contacts: {cs}</p><form method=post action=/contacts><label>Name<input name=name required></label><label>Channel<select name=channel><option value=sms>SMS</option><option value=push>Push webhook</option></select></label><label>Destination<input name=destination required></label><button>Add contact</button></form><hr><form method=post action=/data/delete onsubmit="return confirm(\'Delete all personal data? This cannot be undone.\')"><button class=danger>Delete personal data</button></form></section></aside></div>'
+    recorder='''<script>let mediaRecorder,chunks=[];const record=document.getElementById('recordVoice');record.onclick=async()=>{if(mediaRecorder&&mediaRecorder.state==='recording'){mediaRecorder.stop();record.textContent='Record a family voice note';return}const title=document.getElementById('voiceTitle').value.trim();if(!title){alert('Enter a voice-note title first.');return}const stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];mediaRecorder=new MediaRecorder(stream);mediaRecorder.ondataavailable=e=>chunks.push(e.data);mediaRecorder.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());const blob=new Blob(chunks,{type:mediaRecorder.mimeType||'audio/webm'}),data=new FormData();data.append('title',title);data.append('description','Family-recorded reminder');data.append('file',blob,'voice-note.webm');record.disabled=true;const response=await fetch('/upload',{method:'POST',body:data});location.href=response.url};mediaRecorder.start();record.textContent='Stop and save';};</script>'''
+    body=body.replace('<h2>Upload family media</h2>','<h2>Upload family media</h2><label>Voice-note title<input id="voiceTitle" maxlength="120"></label><button type="button" id="recordVoice">Record a family voice note</button><p class="muted">Or upload an existing photo or voice note below.</p>')+recorder
+    return _layout("Caregiver dashboard",body,True)
+
+def _multipart(handler,length):
+    raw=b"Content-Type: "+handler.headers["Content-Type"].encode()+b"\r\nMIME-Version: 1.0\r\n\r\n"+handler.rfile.read(length); msg=BytesParser(policy=default).parsebytes(raw); result={}
+    for part in msg.iter_parts():
+        name=part.get_param("name",header="content-disposition"); filename=part.get_filename(); data=part.get_payload(decode=True)
+        result[name]=(filename,part.get_content_type(),data) if filename else data.decode(errors="replace")
+    return result
+
+def make_handler(app):
+ class Handler(BaseHTTPRequestHandler):
+    def auth(self):
+        c=SimpleCookie(self.headers.get("Cookie","")); return "fred_session" in c and app.secrets.valid_session(c["fred_session"].value)
+    def redirect(self,path,notice=""):
+        self.send_response(303); self.send_header("Location",path+("?notice="+quote(notice) if notice else "")); self.end_headers()
+    def send(self,body,status=200,kind="text/html; charset=utf-8"):
+        self.send_response(status); self.send_header("Content-Type",kind); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
+    def json(self,payload,status=200):self.send(json.dumps(payload).encode(),status,"application/json")
+    def form(self,limit=20000):
+        length=int(self.headers.get("Content-Length","0"));
+        if length>limit:raise ValueError("Request too large")
+        return {k:v[0] for k,v in parse_qs(self.rfile.read(length).decode()).items()}
+    def do_GET(self):
+        p=urlparse(self.path); notice=parse_qs(p.query).get("notice",[""])[0]
+        if p.path=="/":app.scheduler.deliver_due();self.send(_page(app,notice));return
+        if p.path=="/caregiver":
+            if not app.store.configured():self.send(_onboarding());return
+            self.send(_caregiver(app,notice) if self.auth() else _login(notice));return
+        if p.path.startswith("/local-media/"):
+            path=app.media_dir/(Path(p.path).name+".enc")
+            if path.is_file():
+                try:self.send(app.secrets.decrypt_bytes(path.read_bytes()),kind=mimetypes.guess_type(Path(p.path).name)[0] or "application/octet-stream")
+                except Exception:self.send_error(500)
+                return
+        self.send_error(404)
+    def do_POST(self):
+        p=urlparse(self.path).path; length=int(self.headers.get("Content-Length","0"))
+        if p=="/api/delivery-status":
+            supplied=parse_qs(urlparse(self.path).query).get("token",[""])[0]
+            if not supplied or supplied!=os.environ.get("ROBOT_DELIVERY_CALLBACK_TOKEN",""):self.send_error(403);return
+            try:
+                f=self.form(4096); updated=app.store.update_delivery_status(f["MessageSid"],f["MessageStatus"]);self.send(b"ok" if updated else b"unknown",200,"text/plain");return
+            except (KeyError,ValueError):self.send_error(400);return
+        if p=="/api/conversation":
+            try:
+                if not 0<length<=16384:raise ValueError("Message is too large or empty.")
+                data=json.loads(self.rfile.read(length)); message=data.get("message") if isinstance(data,dict) else None
+                if not isinstance(message,str) or not message.strip() or len(message)>2000:raise ValueError("Enter a valid message of 1–2000 characters.")
+                reply,risk=app.conversation.respond(message.strip()); app.store.record_health("check_in","conversation"); self.json({"reply":reply,"risk":risk.value});return
+            except (ValueError,json.JSONDecodeError) as e:self.json({"error":str(e)},400);return
+            except RemoteServiceError as e:self.json({"error":str(e)},502);return
+        if p=="/api/voice":
+            try:
+                if length>12_000_000:raise ValueError("Recording is too large")
+                data=json.loads(self.rfile.read(length)); audio=base64.b64decode(data["audio"],validate=True); transcript,reply,risk=app.voice_turn(audio,str(data.get("content_type","audio/webm"))); app.store.record_health("check_in","voice");self.json({"transcript":transcript,"reply":reply,"risk":risk});return
+            except SpeechNotConfigured as e:self.json({"error":str(e)},503);return
+            except Exception as e:self.json({"error":str(e)},400);return
+        if p.startswith("/reminder/"):
+            parts=p.split("/"); status=ReminderStatus.ACKNOWLEDGED if parts[-1]=="ack" else ReminderStatus.NEEDS_HELP; ok=app.store.acknowledge_reminder(parts[-2],status,datetime.now(UTC))
+            if status==ReminderStatus.NEEDS_HELP:app.notifier.notify(Assessment(RiskLevel.CAREGIVER,"Help requested for a reminder.","I have recorded that you need help."))
+            app.store.record_health("check_in",status.value);app.set_status("idle");self.redirect("/","Thank you. Your response was recorded." if ok else "Reminder not found.");return
+        if p=="/onboarding":
+            try:
+                f=self.form();step=int(f["step"])
+                if step==1:
+                    if len(f.get("password",""))<10 or f["password"]!=f.get("confirm"):raise ValueError("Passwords must match and contain at least 10 characters.")
+                    app.store.set_setting("caregiver_password_hash",DeviceSecrets.hash_password(f["password"]));self.send(_onboarding(2));return
+                if step==2:app.store.set_setting("quiet_start",f["quiet_start"]);app.store.set_setting("quiet_end",f["quiet_end"]);self.send(_onboarding(3));return
+                if step==3:app.store.add_contact(CaregiverContact(uuid.uuid4().hex,f["name"],f["channel"],f["destination"]));self.redirect("/caregiver","Setup complete. Sign in.");return
+            except (KeyError,ValueError) as e:self.send(_onboarding(max(1,min(3,int(locals().get('step',1)))),str(e)),400);return
+        if p=="/login":
+            f=self.form(); stored=app.store.setting("caregiver_password_hash")
+            if not DeviceSecrets.verify_password(f.get("password",""),stored):self.send(_login("Incorrect password."),401);return
+            self.send_response(303);self.send_header("Location","/caregiver");self.send_header("Set-Cookie",f"fred_session={app.secrets.issue_session()}; HttpOnly; SameSite=Strict; Path=/");self.end_headers();return
+        if not self.auth():self.send(_login("Please sign in."),401);return
+        try:
+            if p=="/reminders":
+                f=self.form(); local=datetime.fromisoformat(f["due_at"]).astimezone(); rec=f.get("recurrence","none")
+                if rec not in {"none","daily","weekly"}:raise ValueError("Invalid recurrence")
+                app.scheduler.schedule(Reminder(uuid.uuid4().hex,f["message"].strip(),local,rec,voice_note_uri=f.get("voice_note_uri","")));self.redirect("/caregiver","Reminder scheduled.");return
+            if p=="/contacts":
+                f=self.form(); channel=f["channel"]; destination=f["destination"].strip()
+                if channel=="sms" and not destination.startswith("+"):raise ValueError("Use an international phone number beginning with +.")
+                if channel=="push" and urlparse(destination).scheme!="https":raise ValueError("Push webhook must use HTTPS.")
+                app.store.add_contact(CaregiverContact(uuid.uuid4().hex,f["name"].strip(),channel,destination));self.redirect("/caregiver","Caregiver contact added.");return
+            if p=="/upload":
+                if length>12_000_000:raise ValueError("File is larger than 12 MB.")
+                f=_multipart(self,length); filename,kind,data=f["file"]; allowed={"image/jpeg":"jpg","image/png":"png","image/webp":"webp","audio/webm":"webm","audio/mpeg":"mp3","audio/wav":"wav"}
+                if kind not in allowed or not data:raise ValueError("Choose a supported photo or audio file.")
+                ident=uuid.uuid4().hex; name=f"{ident}.{allowed[kind]}";(app.media_dir/(name+".enc")).write_bytes(app.secrets.encrypt_bytes(data)); media_kind="audio" if kind.startswith("audio/") else "image";app.store.add_media(FamiliarMedia(ident,str(f["title"])[:120],"/local-media/"+name,media_kind,str(f.get("description",""))[:300]));self.redirect("/caregiver","Family media encrypted and uploaded.");return
+            if p=="/data/delete":
+                for path in app.media_dir.glob("*.enc"):path.unlink()
+                app.store.delete_personal_data();self.redirect("/caregiver","Personal data deleted.");return
+        except (KeyError,ValueError) as e:self.send_error(400,str(e));return
+        self.send_error(404)
+    def log_message(self,fmt,*args):print("WEB:",fmt%args)
+ return Handler
+
+def serve(data_dir="data",host="127.0.0.1",port=8080,open_browser=False,certfile=None,keyfile=None,pico_device=None):
+    app=RobotApplication(Path(data_dir),pico_device);server=ThreadingHTTPServer((host,port),make_handler(app))
+    if certfile and keyfile:ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(certfile,keyfile);server.socket=ctx.wrap_socket(server.socket,server_side=True)
+    stop=threading.Event()
+    def loop():
+        while not stop.wait(1):app.scheduler.deliver_due()
+    threading.Thread(target=loop,daemon=True).start()
+    if open_browser:threading.Timer(.5,lambda:webbrowser.open(f'{"https" if certfile else "http"}://{host}:{port}')).start()
+    print(f'FRED running at {"https" if certfile else "http"}://{host}:{port}')
+    try:server.serve_forever(.5)
+    except KeyboardInterrupt:pass
+    finally:stop.set();server.server_close();app.pico and app.pico.close()

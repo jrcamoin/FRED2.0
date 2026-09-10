@@ -1,0 +1,22 @@
+[Unit]
+Description=FRED dementia care companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fred
+Group=fred
+WorkingDirectory=/opt/fred
+EnvironmentFile=-/opt/fred/.env
+ExecStart=/opt/fred/.venv/bin/dementia-care-robot web --host 0.0.0.0 --port 8080 --data-dir /var/lib/fred --pico /dev/ttyACM0
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fred
+
+[Install]
+WantedBy=multi-user.target

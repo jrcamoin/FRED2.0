@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .coordinator import CareCoordinator
 from .models import Reminder
@@ -18,8 +18,18 @@ class ReminderScheduler:
 
     def deliver_due(self, now: datetime | None = None) -> list[Reminder]:
         at = now or datetime.now(UTC)
+        local = at.astimezone()
+        quiet_start = self.store.setting("quiet_start", "21:00")
+        quiet_end = self.store.setting("quiet_end", "07:00")
+        current = local.strftime("%H:%M")
+        quiet = current >= quiet_start or current < quiet_end if quiet_start > quiet_end else quiet_start <= current < quiet_end
+        if quiet:
+            return []
         due = self.store.due_reminders(at)
         for reminder in due:
             self.coordinator.deliver_reminder(reminder)
-            self.store.mark_delivered(reminder.reminder_id, at)
+            next_due = None
+            if reminder.recurrence == "daily": next_due = reminder.due_at + timedelta(days=1)
+            elif reminder.recurrence == "weekly": next_due = reminder.due_at + timedelta(days=7)
+            self.store.mark_delivered(reminder.reminder_id, at, next_due)
         return due

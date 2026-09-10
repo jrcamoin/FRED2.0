@@ -14,6 +14,14 @@ This repository now provides a working, hardware-neutral Python prototype for:
 
 It is **not a medical device or emergency service**. It must not diagnose, recommend medication changes, restrain a person, impersonate a human, or replace professional care. Production use requires clinical, accessibility, privacy, security, and regulatory review.
 
+## Caregiver setup and Raspberry Pi deployment
+
+On first launch, open `/caregiver` and complete the three-step setup: create a caregiver password, choose quiet hours, and add an SMS or HTTPS push-webhook contact. The resident screen at `/` deliberately has no login; caregiver configuration and personal-data controls require an authenticated session.
+
+Personal profile text, conversations, contact destinations, reminder messages, photos, and voice notes are encrypted at rest using a device key stored at `data/.device-key` with owner-only permissions. Back up that key separately: encrypted data cannot be recovered without it. For production, also enable Raspberry Pi OS full-disk encryption, HTTPS, firewalling, automatic security updates, and physical protection of the SD card.
+
+For SMS alerts, configure the three required `ROBOT_TWILIO_*` settings shown in `.env.example`. Push contacts accept an HTTPS endpoint receiving `{title, message}` JSON. Provider acceptance, retries, and failures appear on the caregiver dashboard. To receive carrier delivery status, expose the callback over HTTPS and configure the optional callback URL and a long random callback token. Neither channel is an emergency service.
+
 ## Quick start
 
 Python 3.11+ is sufficient; the starter has no runtime dependencies.

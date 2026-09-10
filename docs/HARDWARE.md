@@ -72,6 +72,12 @@ dementia-care-robot web --host 0.0.0.0 --pico /dev/ttyACM0
 
 For the Pi-attached LCD, launch Chromium in kiosk mode at `http://127.0.0.1:8080`. Localhost is a secure browser context for microphone purposes. A separate tablet should use the HTTPS setup in the README.
 
+For an appliance-style installation, copy the repository to `/opt/fred`, create a dedicated `fred` system user, create `/var/lib/fred` owned by that user, install into `/opt/fred/.venv`, and install `deploy/fred.service` as `/etc/systemd/system/fred.service`. Add the `fred` user to the group that owns `/dev/ttyACM0` (normally `dialout`), then enable the service. Review the unit paths and Pico device before starting it.
+
+The caregiver dashboard reports network reachability, free storage, uptime, Pico connection, last resident check-in, and Raspberry Pi under-voltage/throttling when `vcgencmd` is installed. Treat an under-voltage warning as a power-supply or cable fault; do not hide it in production.
+
+The resident ACTION switch acknowledges the currently displayed reminder. The HELP switch creates an urgent alert through configured SMS/push contacts. Test the entire notification chain—including a deliberately disconnected network—before every supervised pilot.
+
 ## Before final wiring
 
 Record the exact model or a clear photo of each LCD, microphone, speaker/amplifier, LED ring, switch, power supply, and Pico board. In particular, LED type, LED count, voltage, speaker amplification, microphone interface, and LCD input determine the final wiring and power design.

@@ -1,125 +1,120 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-from .models import CareProfile, ConversationTurn, FamiliarMedia, Reminder
+from .models import (AlertDelivery, CareProfile, CaregiverContact, ConversationTurn,
+                     FamiliarMedia, Reminder, ReminderStatus, RiskLevel)
+from .security import DeviceSecrets
 
 
 class SQLiteStore:
-    """Small local store. Production deployments should add encryption and access control."""
-
-    def __init__(self, path: str | Path = "robot.db") -> None:
-        self.path = str(path)
+    """SQLite metadata with authenticated field encryption for personal content."""
+    def __init__(self, path: str | Path = "robot.db", secrets: DeviceSecrets | None = None) -> None:
+        path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+        self.path, self.secrets = str(path), secrets or DeviceSecrets(path.parent)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        return connection
+    def _connect(self):
+        db = sqlite3.connect(self.path, timeout=10); db.row_factory = sqlite3.Row; return db
 
     @contextmanager
     def _database(self):
-        connection = self._connect()
+        db = self._connect()
         try:
-            with connection:
-                yield connection
-        finally:
-            connection.close()
+            with db: yield db
+        finally: db.close()
 
     def _initialize(self) -> None:
         with self._database() as db:
             db.executescript("""
-                CREATE TABLE IF NOT EXISTS reminders (
-                    id TEXT PRIMARY KEY, message TEXT NOT NULL, due_at TEXT NOT NULL,
-                    delivered_at TEXT
-                );
-                CREATE TABLE IF NOT EXISTS media (
-                    id TEXT PRIMARY KEY, title TEXT NOT NULL, uri TEXT NOT NULL,
-                    kind TEXT NOT NULL, description TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS conversation (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL,
-                    content TEXT NOT NULL, created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS care_profile (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    preferred_name TEXT NOT NULL, important_people TEXT NOT NULL,
-                    interests TEXT NOT NULL, daily_routine TEXT NOT NULL,
-                    comforts TEXT NOT NULL, usual_item_locations TEXT NOT NULL
-                );
+            CREATE TABLE IF NOT EXISTS reminders(id TEXT PRIMARY KEY,message TEXT NOT NULL,due_at TEXT NOT NULL,delivered_at TEXT,recurrence TEXT NOT NULL DEFAULT 'none',status TEXT NOT NULL DEFAULT 'scheduled',occurrence_at TEXT,acknowledged_at TEXT,voice_note_uri TEXT NOT NULL DEFAULT '');
+            CREATE TABLE IF NOT EXISTS reminder_events(id INTEGER PRIMARY KEY AUTOINCREMENT,reminder_id TEXT NOT NULL,occurrence_at TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,title TEXT NOT NULL,uri TEXT NOT NULL,kind TEXT NOT NULL,description TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS conversation(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS care_profile(id INTEGER PRIMARY KEY CHECK(id=1),preferred_name TEXT NOT NULL,important_people TEXT NOT NULL,interests TEXT NOT NULL,daily_routine TEXT NOT NULL,comforts TEXT NOT NULL,usual_item_locations TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS caregiver_contacts(id TEXT PRIMARY KEY,name TEXT NOT NULL,channel TEXT NOT NULL,destination TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
+            CREATE TABLE IF NOT EXISTS alert_deliveries(id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,reason TEXT NOT NULL,risk TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,provider_id TEXT NOT NULL DEFAULT '');
+            CREATE TABLE IF NOT EXISTS health_events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,value TEXT NOT NULL,created_at TEXT NOT NULL);
             """)
+            cols = {r[1] for r in db.execute("PRAGMA table_info(reminders)")}
+            for name, definition in {"recurrence":"TEXT NOT NULL DEFAULT 'none'","status":"TEXT NOT NULL DEFAULT 'scheduled'","occurrence_at":"TEXT","acknowledged_at":"TEXT","voice_note_uri":"TEXT NOT NULL DEFAULT ''"}.items():
+                if name not in cols: db.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
+            db.execute("UPDATE reminders SET status='delivered' WHERE delivered_at IS NOT NULL AND status='scheduled'")
 
-    def add_reminder(self, reminder: Reminder) -> None:
+    def _reminder(self, r):
+        return Reminder(r["id"],self.secrets.decrypt(r["message"]),datetime.fromisoformat(r["due_at"]),r["recurrence"],ReminderStatus(r["status"]),datetime.fromisoformat(r["occurrence_at"]) if r["occurrence_at"] else None,r["voice_note_uri"])
+    def add_reminder(self, x: Reminder) -> None:
+        with self._database() as db: db.execute("INSERT INTO reminders(id,message,due_at,recurrence,status,voice_note_uri) VALUES(?,?,?,?,?,?)",(x.reminder_id,self.secrets.encrypt(x.message),x.due_at.astimezone(UTC).isoformat(),x.recurrence,x.status.value,x.voice_note_uri))
+    def list_reminders(self, include_delivered=False):
+        q="SELECT * FROM reminders"+("" if include_delivered else " WHERE status='scheduled'")+" ORDER BY due_at"
+        with self._database() as db: return [self._reminder(r) for r in db.execute(q)]
+    def due_reminders(self, now):
+        with self._database() as db: return [self._reminder(r) for r in db.execute("SELECT * FROM reminders WHERE status='scheduled' AND due_at<=? ORDER BY due_at",(now.astimezone(UTC).isoformat(),))]
+    def mark_delivered(self, reminder_id, at, next_due=None):
+        stamp=at.astimezone(UTC).isoformat()
         with self._database() as db:
-            db.execute(
-                "INSERT INTO reminders(id, message, due_at) VALUES (?, ?, ?)",
-                (reminder.reminder_id, reminder.message, reminder.due_at.astimezone(UTC).isoformat()),
-            )
-
-    def list_reminders(self, include_delivered: bool = False) -> list[Reminder]:
-        query = "SELECT id, message, due_at FROM reminders"
-        if not include_delivered:
-            query += " WHERE delivered_at IS NULL"
-        query += " ORDER BY due_at"
+            db.execute("UPDATE reminders SET delivered_at=?,occurrence_at=?,status='delivered' WHERE id=?",(stamp,stamp,reminder_id)); db.execute("INSERT INTO reminder_events(reminder_id,occurrence_at,status,created_at) VALUES(?,?,'delivered',?)",(reminder_id,stamp,stamp))
+            if next_due: db.execute("UPDATE reminders SET due_at=? WHERE id=?",(next_due.astimezone(UTC).isoformat(),reminder_id))
+    def acknowledge_reminder(self, reminder_id, status, at):
+        if status not in {ReminderStatus.ACKNOWLEDGED,ReminderStatus.NEEDS_HELP,ReminderStatus.MISSED}: raise ValueError("Invalid acknowledgement")
+        stamp=at.astimezone(UTC).isoformat()
         with self._database() as db:
-            return [Reminder(row["id"], row["message"], datetime.fromisoformat(row["due_at"])) for row in db.execute(query)]
-
-    def due_reminders(self, now: datetime) -> list[Reminder]:
+            row=db.execute("SELECT occurrence_at,recurrence FROM reminders WHERE id=?",(reminder_id,)).fetchone()
+            if not row:return False
+            next_status=ReminderStatus.SCHEDULED.value if row["recurrence"]!="none" else status.value
+            db.execute("UPDATE reminders SET status=?,acknowledged_at=? WHERE id=?",(next_status,stamp,reminder_id)); db.execute("INSERT INTO reminder_events(reminder_id,occurrence_at,status,created_at) VALUES(?,?,?,?)",(reminder_id,row[0] or stamp,status.value,stamp))
+        return True
+    def daily_summary(self, day=None):
+        day=day or datetime.now().astimezone().date(); start=datetime.combine(day,datetime.min.time()).astimezone().astimezone(UTC); end=start.replace(hour=23,minute=59,second=59)
         with self._database() as db:
-            rows = db.execute(
-                "SELECT id, message, due_at FROM reminders WHERE delivered_at IS NULL AND due_at <= ? ORDER BY due_at",
-                (now.astimezone(UTC).isoformat(),),
-            )
-            return [Reminder(row["id"], row["message"], datetime.fromisoformat(row["due_at"])) for row in rows]
-
-    def mark_delivered(self, reminder_id: str, at: datetime) -> None:
+            counts={r["status"]:r["count"] for r in db.execute("SELECT status,COUNT(*) count FROM reminder_events WHERE created_at BETWEEN ? AND ? GROUP BY status",(start.isoformat(),end.isoformat()))}; counts["alerts"]=db.execute("SELECT COUNT(*) FROM alert_deliveries WHERE created_at BETWEEN ? AND ?",(start.isoformat(),end.isoformat())).fetchone()[0]
+        return counts
+    def add_media(self,x):
+        with self._database() as db: db.execute("INSERT OR REPLACE INTO media VALUES(?,?,?,?,?)",(x.media_id,self.secrets.encrypt(x.title),x.uri,x.kind,self.secrets.encrypt(x.description)))
+    def list_media(self):
+        with self._database() as db: rows=list(db.execute("SELECT * FROM media ORDER BY id"))
+        return [FamiliarMedia(r["id"],self.secrets.decrypt(r["title"]),r["uri"],r["kind"],self.secrets.decrypt(r["description"])) for r in rows]
+    def append_turn(self,x):
+        with self._database() as db: db.execute("INSERT INTO conversation(role,content,created_at) VALUES(?,?,?)",(x.role,self.secrets.encrypt(x.content),x.at.isoformat()))
+    def conversation(self,limit=12):
+        with self._database() as db: rows=list(db.execute("SELECT role,content,created_at FROM conversation ORDER BY id DESC LIMIT ?",(limit,)))
+        return [ConversationTurn(r["role"],self.secrets.decrypt(r["content"]),datetime.fromisoformat(r["created_at"])) for r in reversed(rows)]
+    def clear_conversation(self):
+        with self._database() as db: db.execute("DELETE FROM conversation")
+    def save_care_profile(self,p):
+        vals=[self.secrets.encrypt(v) for v in (p.preferred_name,p.important_people,p.interests,p.daily_routine,p.comforts,p.usual_item_locations)]
+        with self._database() as db: db.execute("INSERT OR REPLACE INTO care_profile VALUES(1,?,?,?,?,?,?)",vals)
+    def care_profile(self):
+        with self._database() as db:r=db.execute("SELECT * FROM care_profile WHERE id=1").fetchone()
+        return CareProfile() if not r else CareProfile(*(self.secrets.decrypt(r[k]) for k in ("preferred_name","important_people","interests","daily_routine","comforts","usual_item_locations")))
+    def setting(self,key,default=""):
+        with self._database() as db:r=db.execute("SELECT value FROM settings WHERE key=?",(key,)).fetchone()
+        return self.secrets.decrypt(r[0]) if r else default
+    def set_setting(self,key,value):
+        with self._database() as db:db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)",(key,self.secrets.encrypt(value)))
+    def configured(self):return bool(self.setting("caregiver_password_hash"))
+    def add_contact(self,x):
+        with self._database() as db:db.execute("INSERT OR REPLACE INTO caregiver_contacts VALUES(?,?,?,?,?)",(x.contact_id,self.secrets.encrypt(x.name),x.channel,self.secrets.encrypt(x.destination),int(x.enabled)))
+    def contacts(self):
+        with self._database() as db:rows=list(db.execute("SELECT * FROM caregiver_contacts WHERE enabled=1"))
+        return [CaregiverContact(r["id"],self.secrets.decrypt(r["name"]),r["channel"],self.secrets.decrypt(r["destination"]),bool(r["enabled"])) for r in rows]
+    def save_delivery(self,x):
+        with self._database() as db:db.execute("INSERT OR REPLACE INTO alert_deliveries VALUES(?,?,?,?,?,?,?,?,?)",(x.delivery_id,x.contact_id,self.secrets.encrypt(x.reason),x.risk.value,x.status,x.attempts,x.created_at.isoformat(),x.updated_at.isoformat(),x.provider_id))
+    def deliveries(self,limit=20):
+        with self._database() as db:rows=list(db.execute("SELECT * FROM alert_deliveries ORDER BY created_at DESC LIMIT ?",(limit,)))
+        return [AlertDelivery(r["id"],r["contact_id"],self.secrets.decrypt(r["reason"]),RiskLevel(r["risk"]),r["status"],r["attempts"],datetime.fromisoformat(r["created_at"]),datetime.fromisoformat(r["updated_at"]),r["provider_id"]) for r in rows]
+    def update_delivery_status(self,provider_id,status):
+        allowed={"queued","sent","delivered","undelivered","failed","read"}
+        if status not in allowed:return False
         with self._database() as db:
-            db.execute("UPDATE reminders SET delivered_at = ? WHERE id = ?", (at.astimezone(UTC).isoformat(), reminder_id))
-
-    def add_media(self, media: FamiliarMedia) -> None:
-        with self._database() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO media(id, title, uri, kind, description) VALUES (?, ?, ?, ?, ?)",
-                (media.media_id, media.title, media.uri, media.kind, media.description),
-            )
-
-    def list_media(self) -> list[FamiliarMedia]:
-        with self._database() as db:
-            return [FamiliarMedia(row["id"], row["title"], row["uri"], row["kind"], row["description"]) for row in db.execute("SELECT * FROM media ORDER BY title")]
-
-    def append_turn(self, turn: ConversationTurn) -> None:
-        with self._database() as db:
-            db.execute("INSERT INTO conversation(role, content, created_at) VALUES (?, ?, ?)", (turn.role, turn.content, turn.at.isoformat()))
-
-    def conversation(self, limit: int = 12) -> list[ConversationTurn]:
-        with self._database() as db:
-            rows = list(db.execute("SELECT role, content, created_at FROM conversation ORDER BY id DESC LIMIT ?", (limit,)))
-        return [ConversationTurn(row["role"], row["content"], datetime.fromisoformat(row["created_at"])) for row in reversed(rows)]
-
-    def clear_conversation(self) -> None:
-        with self._database() as db:
-            db.execute("DELETE FROM conversation")
-
-    def save_care_profile(self, profile: CareProfile) -> None:
-        with self._database() as db:
-            db.execute(
-                """INSERT OR REPLACE INTO care_profile(
-                    id, preferred_name, important_people, interests, daily_routine,
-                    comforts, usual_item_locations
-                ) VALUES (1, ?, ?, ?, ?, ?, ?)""",
-                (
-                    profile.preferred_name, profile.important_people, profile.interests,
-                    profile.daily_routine, profile.comforts, profile.usual_item_locations,
-                ),
-            )
-
-    def care_profile(self) -> CareProfile:
-        with self._database() as db:
-            row = db.execute("SELECT * FROM care_profile WHERE id = 1").fetchone()
-        if row is None:
-            return CareProfile()
-        return CareProfile(
-            row["preferred_name"], row["important_people"], row["interests"],
-            row["daily_routine"], row["comforts"], row["usual_item_locations"],
-        )
+            cursor=db.execute("UPDATE alert_deliveries SET status=?,updated_at=? WHERE provider_id=?",(status,datetime.now(UTC).isoformat(),provider_id))
+            return cursor.rowcount>0
+    def record_health(self,kind,value,at=None):
+        with self._database() as db:db.execute("INSERT INTO health_events(kind,value,created_at) VALUES(?,?,?)",(kind,value,(at or datetime.now(UTC)).isoformat()))
+    def last_health(self,kind):
+        with self._database() as db:r=db.execute("SELECT created_at FROM health_events WHERE kind=? ORDER BY id DESC LIMIT 1",(kind,)).fetchone()
+        return datetime.fromisoformat(r[0]) if r else None
+    def delete_personal_data(self):
+        with self._database() as db:db.executescript("DELETE FROM conversation;DELETE FROM media;DELETE FROM care_profile;DELETE FROM reminders;DELETE FROM reminder_events;DELETE FROM caregiver_contacts;DELETE FROM alert_deliveries;")

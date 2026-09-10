@@ -9,11 +9,45 @@ class RiskLevel(StrEnum):
     URGENT = "urgent"
 
 
+class ReminderStatus(StrEnum):
+    SCHEDULED = "scheduled"
+    DELIVERED = "delivered"
+    ACKNOWLEDGED = "acknowledged"
+    NEEDS_HELP = "needs_help"
+    MISSED = "missed"
+
+
 @dataclass(frozen=True, slots=True)
 class Reminder:
     reminder_id: str
     message: str
     due_at: datetime
+    recurrence: str = "none"
+    status: ReminderStatus = ReminderStatus.SCHEDULED
+    occurrence_at: datetime | None = None
+    voice_note_uri: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CaregiverContact:
+    contact_id: str
+    name: str
+    channel: str
+    destination: str
+    enabled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class AlertDelivery:
+    delivery_id: str
+    contact_id: str
+    reason: str
+    risk: RiskLevel
+    status: str
+    attempts: int
+    created_at: datetime
+    updated_at: datetime
+    provider_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

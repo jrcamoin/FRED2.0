@@ -11,7 +11,8 @@ from dementia_care_robot.api_errors import RemoteServiceError
 from dementia_care_robot.config import load_dotenv
 from dementia_care_robot.conversation import ConversationService, OfflineCompanion, OpenAICompatibleModel
 from dementia_care_robot.coordinator import CareCoordinator
-from dementia_care_robot.models import CareProfile, FamiliarMedia, Reminder, RiskLevel
+from dementia_care_robot.models import AlertDelivery, CareProfile, CaregiverContact, FamiliarMedia, Reminder, ReminderStatus, RiskLevel
+from dementia_care_robot.security import DeviceSecrets
 from dementia_care_robot.hardware import PicoBridge
 from dementia_care_robot.scheduler import ReminderScheduler
 from dementia_care_robot.storage import SQLiteStore
@@ -45,6 +46,49 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual([r.reminder_id for r in scheduler.deliver_due(now)], ["due"])
         self.assertEqual(scheduler.deliver_due(now), [])
         self.assertEqual(len(self.speaker.messages), 1)
+
+    def test_daily_reminder_waits_for_ack_then_reschedules(self):
+        scheduler = ReminderScheduler(self.store, CareCoordinator(self.speaker, self.notifier))
+        now = datetime.now(UTC).replace(hour=12)
+        scheduler.schedule(Reminder("daily", "Drink water.", now - timedelta(minutes=1), "daily"))
+        scheduler.deliver_due(now)
+        current = self.store.list_reminders(True)[0]
+        self.assertEqual(current.status, ReminderStatus.DELIVERED)
+        self.assertTrue(self.store.acknowledge_reminder("daily", ReminderStatus.ACKNOWLEDGED, now))
+        current = self.store.list_reminders()[0]
+        self.assertEqual(current.status, ReminderStatus.SCHEDULED)
+        self.assertGreater(current.due_at, now)
+
+    def test_quiet_hours_hold_due_reminders(self):
+        scheduler = ReminderScheduler(self.store, CareCoordinator(self.speaker, self.notifier))
+        self.store.set_setting("quiet_start", "00:00")
+        self.store.set_setting("quiet_end", "23:59")
+        now = datetime.now(UTC)
+        scheduler.schedule(Reminder("quiet", "Rest.", now - timedelta(minutes=1)))
+        self.assertEqual(scheduler.deliver_due(now), [])
+
+    def test_sensitive_fields_are_encrypted_on_disk(self):
+        profile = CareProfile(preferred_name="Unique Secret Name")
+        self.store.save_care_profile(profile)
+        self.store.add_contact(CaregiverContact("c1", "Maya", "sms", "+15551234567"))
+        raw = Path(self.store.path).read_bytes()
+        self.assertNotIn(b"Unique Secret Name", raw)
+        self.assertNotIn(b"+15551234567", raw)
+        self.assertEqual(self.store.care_profile(), profile)
+
+    def test_password_hash_and_session(self):
+        encoded = DeviceSecrets.hash_password("a-long-password")
+        self.assertTrue(DeviceSecrets.verify_password("a-long-password", encoded))
+        self.assertFalse(DeviceSecrets.verify_password("wrong", encoded))
+        token = self.store.secrets.issue_session()
+        self.assertTrue(self.store.secrets.valid_session(token))
+
+    def test_provider_delivery_acknowledgement_updates_record(self):
+        now = datetime.now(UTC)
+        delivery = AlertDelivery("d1", "c1", "Check-in missed", RiskLevel.CAREGIVER, "provider_accepted", 1, now, now, "SM123")
+        self.store.save_delivery(delivery)
+        self.assertTrue(self.store.update_delivery_status("SM123", "delivered"))
+        self.assertEqual(self.store.deliveries()[0].status, "delivered")
 
     def test_dotenv_loads_robot_settings_without_overriding_shell(self):
         env_file = Path(self.temp.name) / ".env"
