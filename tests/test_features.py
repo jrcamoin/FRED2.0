@@ -112,6 +112,15 @@ class FeatureTests(unittest.TestCase):
         self.assertIn("window.SpeechRecognition||window.webkitSpeechRecognition", page)
         self.assertIn("No OpenAI transcription charges", page)
 
+    def test_online_page_records_audio_for_server_transcription(self):
+        with patch.dict("os.environ", {"ROBOT_LLM_API_KEY": "test-key"}, clear=True):
+            app = RobotApplication(Path(self.temp.name) / "online-data")
+            page = _page(app).decode()
+        self.assertIn('data-server-transcription="true"', page)
+        self.assertIn("new MediaRecorder", page)
+        self.assertIn("'/api/voice'", page)
+        self.assertIn("getUserMedia({audio:true})", page)
+
     def test_local_ai_uses_ollama_without_remote_transcription(self):
         with patch.dict("os.environ", {"ROBOT_LOCAL_AI": "true"}, clear=True):
             model = OpenAICompatibleModel.from_environment()
@@ -246,6 +255,14 @@ class FeatureTests(unittest.TestCase):
         bridge = PicoBridge("unused", lambda *_: None, BytesIO())
         with self.assertRaisesRegex(ValueError, "Unknown LED state"):
             bridge.set_led("rainbow")
+
+    def test_missing_pico_reconnects_without_blocking_application_start(self):
+        bridge = PicoBridge(str(Path(self.temp.name) / "missing-pico"), lambda *_: None)
+        bridge.start()
+        try:
+            self.assertFalse(bridge.connected)
+        finally:
+            bridge.close()
 
 
 if __name__ == "__main__": unittest.main()

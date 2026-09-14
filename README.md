@@ -24,7 +24,7 @@ For SMS alerts, configure the three required `ROBOT_TWILIO_*` settings shown in 
 
 ## Quick start
 
-Python 3.11+ is sufficient; the starter has no runtime dependencies.
+Python 3.11+ is required. The only runtime package is `cryptography`.
 
 ```bash
 python3 -m venv .venv
@@ -103,11 +103,11 @@ For the Raspberry Pi 2 + Pico + LCD + microphone + speakers + LED-ring build, se
 
 ## Current prototype limitations
 
-- “Caregiver notification” prints to the console and is not a reliable alert. Spoken conversation responses use the tablet browser's installed voice.
+- Spoken conversation responses use the browser's installed voice. Configured SMS and push-webhook alerts still require end-to-end testing and are not an emergency service.
 - Photo URLs may disclose the viewer's IP to the image host. Local upload/copy support is the next privacy milestone.
-- The web server defaults to localhost and has no authentication. Do not expose it to a public or untrusted network.
-- Reminders are one-time only and use the device's local timezone at entry.
-- SQLite is not encrypted. Do not store sensitive health data in this prototype.
+- The resident screen is intentionally unauthenticated. Caregiver pages require the password created during onboarding. Do not expose the server to a public or untrusted network.
+- Reminder times use the device's local timezone at entry.
+- Sensitive SQLite fields and uploaded media are encrypted, but metadata and database structure are visible. Do not treat this as a substitute for full-disk encryption.
 
 ## Suggested next milestones
 

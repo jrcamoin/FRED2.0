@@ -7,9 +7,12 @@ Wants=network-online.target
 Type=simple
 User=fred
 Group=fred
+SupplementaryGroups=dialout video audio
 WorkingDirectory=/opt/fred
+Environment=PYTHONUNBUFFERED=1
+Environment=ROBOT_PICO_DEVICE=/dev/ttyACM0
 EnvironmentFile=-/opt/fred/.env
-ExecStart=/opt/fred/.venv/bin/dementia-care-robot web --host 0.0.0.0 --port 8080 --data-dir /var/lib/fred --pico /dev/ttyACM0
+ExecStart=/opt/fred/.venv/bin/dementia-care-robot web --host 0.0.0.0 --port 8080 --data-dir /var/lib/fred --pico ${ROBOT_PICO_DEVICE}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -17,6 +20,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/fred
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

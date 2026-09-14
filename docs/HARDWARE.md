@@ -60,19 +60,38 @@ Pressing HELP invokes the existing urgent caregiver-notification path. At presen
 
 ## Run on the Pi and LCD
 
-Install Raspberry Pi OS, attach the LCD over HDMI, and connect the Pi to the internet using Ethernet or a compatible USB Wi-Fi adapter. The Pi 2 Model B does not provide the same built-in wireless setup as newer boards.
+Install a currently supported 32-bit Raspberry Pi OS Bookworm image, attach the LCD over HDMI, and connect the Pi to the internet using Ethernet or a compatible USB Wi-Fi adapter. Bookworm supplies Python 3.11 on the Pi 2's ARMv7 architecture. The Pi 2 Model B does not have built-in Wi-Fi.
 
 ```bash
-python3 -m venv .venv
+sudo apt update
+sudo apt install python3-venv python3-cryptography chromium
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install --no-deps -e .
 export ROBOT_LLM_API_KEY="your-key"
 dementia-care-robot web --host 0.0.0.0 --pico /dev/ttyACM0
 ```
 
-For the Pi-attached LCD, launch Chromium in kiosk mode at `http://127.0.0.1:8080`. Localhost is a secure browser context for microphone purposes. A separate tablet should use the HTTPS setup in the README.
+Using Raspberry Pi OS's `python3-cryptography` package avoids compiling Rust-backed cryptography code on the Pi 2. Verify the install before configuring startup:
 
-For an appliance-style installation, copy the repository to `/opt/fred`, create a dedicated `fred` system user, create `/var/lib/fred` owned by that user, install into `/opt/fred/.venv`, and install `deploy/fred.service` as `/etc/systemd/system/fred.service`. Add the `fred` user to the group that owns `/dev/ttyACM0` (normally `dialout`), then enable the service. Review the unit paths and Pico device before starting it.
+```bash
+python -c "from cryptography.fernet import Fernet; print('cryptography OK')"
+python -m unittest discover -s tests -v
+```
+
+For the Pi-attached LCD, launch Chromium in kiosk mode with `chromium --kiosk --noerrdialogs --disable-session-crashed-bubble http://127.0.0.1:8080`. Localhost is a secure browser context for microphone capture. With a configured API key, the page records a single clip and sends it to the server transcription endpoint; without one, it uses browser speech recognition when Chromium provides it. Typed conversation remains available in either mode. A separate tablet should use the HTTPS setup in the README.
+
+For an appliance-style installation, copy the repository to `/opt/fred`, create a dedicated `fred` system user, create `/var/lib/fred` owned by that user, install into `/opt/fred/.venv`, and install `deploy/fred.service` as `/etc/systemd/system/fred.service`. The supplied unit grants the standard `dialout`, `video`, and `audio` supplementary groups. Review the unit paths before starting it.
+
+Prefer the Pico's stable `/dev/serial/by-id/...` path over `/dev/ttyACM0`, whose number can change. Put the override in `/opt/fred/.env`, then enable the service:
+
+```bash
+ls -l /dev/serial/by-id/
+printf 'ROBOT_PICO_DEVICE=/dev/serial/by-id/YOUR_PICO_DEVICE\n' | sudo tee -a /opt/fred/.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now fred
+sudo systemctl status fred
+```
 
 The caregiver dashboard reports network reachability, free storage, uptime, Pico connection, last resident check-in, and Raspberry Pi under-voltage/throttling when `vcgencmd` is installed. Treat an under-voltage warning as a power-supply or cable fault; do not hide it in production.
 
