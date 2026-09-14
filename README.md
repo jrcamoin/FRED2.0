@@ -99,6 +99,18 @@ browser / speech / buttons / sensors
 
 The domain layer contains care behavior, while protocol interfaces in `ports.py` isolate vendor-specific hardware. A Raspberry Pi or robot controller can implement `Speaker`, `MediaDisplay`, and `CaregiverNotifier`; buttons and sensors can call the same coordinator and scheduler methods used by the web interface.
 
+## Caregiver-reviewed learning
+
+The caregiver dashboard lists recent FRED responses for review. A caregiver can rate a response as helpful, confusing, or unsafe, provide a better answer, and optionally approve one verified fact for future conversations. Approved memories are encrypted and added only when their words overlap the resident's current question. Resident statements never become trusted memories automatically.
+
+Reviewed examples can be exported for offline evaluation of new prompts or models. The export contains decrypted conversation text and must be handled as sensitive personal data:
+
+```bash
+dementia-care-robot export-feedback --data-dir data --output private-feedback.jsonl
+```
+
+The command creates the file with owner-only permissions. Review and de-identify it before moving it off the device or using it with an external service.
+
 For the Raspberry Pi 2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Start the Pico bridge with `--pico /dev/ttyACM0`.
 
 ## Current prototype limitations

@@ -64,6 +64,25 @@ class ConversationTurn:
     role: str
     content: str
     at: datetime
+    turn_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseFeedback:
+    feedback_id: str
+    assistant_turn_id: int
+    prompt: str
+    response: str
+    rating: str
+    correction: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovedMemory:
+    memory_id: str
+    content: str
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

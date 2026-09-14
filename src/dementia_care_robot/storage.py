@@ -3,8 +3,9 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from .models import (AlertDelivery, CareProfile, CaregiverContact, ConversationTurn,
-                     FamiliarMedia, Reminder, ReminderStatus, RiskLevel)
+from .models import (AlertDelivery, ApprovedMemory, CareProfile, CaregiverContact,
+                     ConversationTurn, FamiliarMedia, Reminder, ReminderStatus,
+                     ResponseFeedback, RiskLevel)
 from .security import DeviceSecrets
 
 
@@ -32,6 +33,8 @@ class SQLiteStore:
             CREATE TABLE IF NOT EXISTS reminder_events(id INTEGER PRIMARY KEY AUTOINCREMENT,reminder_id TEXT NOT NULL,occurrence_at TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,title TEXT NOT NULL,uri TEXT NOT NULL,kind TEXT NOT NULL,description TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS conversation(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS response_feedback(id TEXT PRIMARY KEY,assistant_turn_id INTEGER NOT NULL UNIQUE,prompt TEXT NOT NULL,response TEXT NOT NULL,rating TEXT NOT NULL,correction TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(assistant_turn_id) REFERENCES conversation(id));
+            CREATE TABLE IF NOT EXISTS approved_memories(id TEXT PRIMARY KEY,content TEXT NOT NULL,source_feedback_id TEXT,created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS care_profile(id INTEGER PRIMARY KEY CHECK(id=1),preferred_name TEXT NOT NULL,important_people TEXT NOT NULL,interests TEXT NOT NULL,daily_routine TEXT NOT NULL,comforts TEXT NOT NULL,usual_item_locations TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS caregiver_contacts(id TEXT PRIMARY KEY,name TEXT NOT NULL,channel TEXT NOT NULL,destination TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
@@ -77,10 +80,34 @@ class SQLiteStore:
         with self._database() as db: rows=list(db.execute("SELECT * FROM media ORDER BY id"))
         return [FamiliarMedia(r["id"],self.secrets.decrypt(r["title"]),r["uri"],r["kind"],self.secrets.decrypt(r["description"])) for r in rows]
     def append_turn(self,x):
-        with self._database() as db: db.execute("INSERT INTO conversation(role,content,created_at) VALUES(?,?,?)",(x.role,self.secrets.encrypt(x.content),x.at.isoformat()))
+        with self._database() as db:
+            cursor=db.execute("INSERT INTO conversation(role,content,created_at) VALUES(?,?,?)",(x.role,self.secrets.encrypt(x.content),x.at.isoformat()))
+            return cursor.lastrowid
     def conversation(self,limit=12):
-        with self._database() as db: rows=list(db.execute("SELECT role,content,created_at FROM conversation ORDER BY id DESC LIMIT ?",(limit,)))
-        return [ConversationTurn(r["role"],self.secrets.decrypt(r["content"]),datetime.fromisoformat(r["created_at"])) for r in reversed(rows)]
+        with self._database() as db: rows=list(db.execute("SELECT id,role,content,created_at FROM conversation ORDER BY id DESC LIMIT ?",(limit,)))
+        return [ConversationTurn(r["role"],self.secrets.decrypt(r["content"]),datetime.fromisoformat(r["created_at"]),r["id"]) for r in reversed(rows)]
+    def conversation_pairs(self,limit=10):
+        with self._database() as db:
+            rows=list(db.execute("""SELECT a.id assistant_turn_id,u.content prompt,a.content response,a.created_at,
+                f.rating FROM conversation a JOIN conversation u ON u.id=(SELECT MAX(id) FROM conversation WHERE id<a.id AND role='user')
+                LEFT JOIN response_feedback f ON f.assistant_turn_id=a.id WHERE a.role='assistant' ORDER BY a.id DESC LIMIT ?""",(limit,)))
+        return [{"assistant_turn_id":r["assistant_turn_id"],"prompt":self.secrets.decrypt(r["prompt"]),"response":self.secrets.decrypt(r["response"]),"created_at":datetime.fromisoformat(r["created_at"]),"rating":r["rating"] or ""} for r in rows]
+    def save_feedback(self,feedback,memory=""):
+        if feedback.rating not in {"helpful","confusing","unsafe"}:raise ValueError("Invalid feedback rating")
+        with self._database() as db:
+            row=db.execute("""SELECT a.role,a.content response,(SELECT content FROM conversation WHERE id<a.id AND role='user' ORDER BY id DESC LIMIT 1) prompt
+                FROM conversation a WHERE a.id=?""",(feedback.assistant_turn_id,)).fetchone()
+            if not row or row["role"]!="assistant" or row["prompt"] is None:raise ValueError("Conversation response not found")
+            db.execute("INSERT OR REPLACE INTO response_feedback VALUES(?,?,?,?,?,?,?)",(feedback.feedback_id,feedback.assistant_turn_id,row["prompt"],row["response"],feedback.rating,self.secrets.encrypt(feedback.correction),feedback.created_at.isoformat()))
+            if memory.strip():db.execute("INSERT INTO approved_memories VALUES(?,?,?,?)",(feedback.feedback_id,self.secrets.encrypt(memory.strip()),feedback.feedback_id,feedback.created_at.isoformat()))
+    def feedback(self):
+        with self._database() as db:rows=list(db.execute("SELECT * FROM response_feedback ORDER BY created_at"))
+        return [ResponseFeedback(r["id"],r["assistant_turn_id"],self.secrets.decrypt(r["prompt"]),self.secrets.decrypt(r["response"]),r["rating"],self.secrets.decrypt(r["correction"]),datetime.fromisoformat(r["created_at"])) for r in rows]
+    def approved_memories(self):
+        with self._database() as db:rows=list(db.execute("SELECT * FROM approved_memories ORDER BY created_at"))
+        return [ApprovedMemory(r["id"],self.secrets.decrypt(r["content"]),datetime.fromisoformat(r["created_at"])) for r in rows]
+    def delete_memory(self,memory_id):
+        with self._database() as db:return db.execute("DELETE FROM approved_memories WHERE id=?",(memory_id,)).rowcount>0
     def clear_conversation(self):
         with self._database() as db: db.execute("DELETE FROM conversation")
     def save_care_profile(self,p):
@@ -117,4 +144,4 @@ class SQLiteStore:
         with self._database() as db:r=db.execute("SELECT created_at FROM health_events WHERE kind=? ORDER BY id DESC LIMIT 1",(kind,)).fetchone()
         return datetime.fromisoformat(r[0]) if r else None
     def delete_personal_data(self):
-        with self._database() as db:db.executescript("DELETE FROM conversation;DELETE FROM media;DELETE FROM care_profile;DELETE FROM reminders;DELETE FROM reminder_events;DELETE FROM caregiver_contacts;DELETE FROM alert_deliveries;")
+        with self._database() as db:db.executescript("DELETE FROM response_feedback;DELETE FROM approved_memories;DELETE FROM conversation;DELETE FROM media;DELETE FROM care_profile;DELETE FROM reminders;DELETE FROM reminder_events;DELETE FROM caregiver_contacts;DELETE FROM alert_deliveries;")

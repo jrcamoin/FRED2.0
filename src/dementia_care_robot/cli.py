@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 from .adapters import ConsoleCaregiverNotifier, ConsoleSpeaker
 from .config import load_dotenv
@@ -20,6 +22,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Dementia care robot prototype")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="run a console interaction")
+    export = commands.add_parser("export-feedback", help="export caregiver-reviewed examples as private JSONL")
+    export.add_argument("--data-dir", default="data")
+    export.add_argument("--output", required=True)
     web = commands.add_parser("web", help="run the local caregiver and patient dashboard")
     web.add_argument("--data-dir", default="data")
     web.add_argument("--host", default="127.0.0.1")
@@ -34,6 +39,13 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
+    elif args.command == "export-feedback":
+        from .storage import SQLiteStore
+        rows=SQLiteStore(Path(args.data_dir)/"robot.db").feedback()
+        output=Path(args.output)
+        output.write_text("".join(json.dumps({"prompt":x.prompt,"response":x.response,"rating":x.rating,"correction":x.correction},ensure_ascii=False)+"\n" for x in rows),encoding="utf-8")
+        output.chmod(0o600)
+        print(f"Exported {len(rows)} reviewed response(s) to {output}. Treat this file as sensitive personal data.")
     elif args.command == "web":
         if args.offline:
             os.environ["ROBOT_OFFLINE_MODE"] = "1"

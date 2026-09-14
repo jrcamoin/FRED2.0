@@ -11,7 +11,7 @@ from dementia_care_robot.api_errors import RemoteServiceError
 from dementia_care_robot.config import load_dotenv
 from dementia_care_robot.conversation import ConversationService, OfflineCompanion, OpenAICompatibleModel
 from dementia_care_robot.coordinator import CareCoordinator
-from dementia_care_robot.models import AlertDelivery, CareProfile, CaregiverContact, FamiliarMedia, Reminder, ReminderStatus, RiskLevel
+from dementia_care_robot.models import AlertDelivery, CareProfile, CaregiverContact, ConversationTurn, FamiliarMedia, Reminder, ReminderStatus, ResponseFeedback, RiskLevel
 from dementia_care_robot.security import DeviceSecrets
 from dementia_care_robot.hardware import PicoBridge
 from dementia_care_robot.scheduler import ReminderScheduler
@@ -203,6 +203,66 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(len(self.store.conversation()), 2)
         self.store.clear_conversation()
         self.assertEqual(self.store.conversation(), [])
+
+    def test_caregiver_feedback_and_memory_are_encrypted_and_reused(self):
+        at = datetime.now(UTC)
+        self.store.append_turn(ConversationTurn("user", "Where are my glasses?", at))
+        turn_id = self.store.append_turn(ConversationTurn("assistant", "Check the table.", at))
+        feedback = ResponseFeedback("feedback-1", turn_id, "tampered prompt", "tampered response", "helpful", "Mention the blue chair.", at)
+        self.store.save_feedback(feedback, "Jo's glasses are beside the blue chair")
+        saved = self.store.feedback()[0]
+        self.assertEqual(saved.prompt, "Where are my glasses?")
+        self.assertEqual(saved.response, "Check the table.")
+        self.assertEqual(self.store.approved_memories()[0].content, "Jo's glasses are beside the blue chair")
+        raw = Path(self.store.path).read_bytes()
+        self.assertNotIn(b"blue chair", raw)
+
+        class CapturingModel:
+            def __init__(self): self.history = []
+            def reply(self, history, profile=None): self.history = history; return "Found it."
+
+        model = CapturingModel()
+        ConversationService(self.store, model, self.notifier).respond("Where are my glasses?", at)
+        self.assertEqual(model.history[0].role, "system")
+        self.assertIn("blue chair", model.history[0].content)
+        self.assertTrue(self.store.delete_memory("feedback-1"))
+        self.assertEqual(self.store.approved_memories(), [])
+
+    def test_offline_companion_uses_approved_memory(self):
+        at = datetime.now(UTC)
+        self.store.append_turn(ConversationTurn("user", "Where are my glasses?", at))
+        turn_id = self.store.append_turn(ConversationTurn("assistant", "Check nearby.", at))
+        self.store.save_feedback(ResponseFeedback("f-offline", turn_id, "", "", "helpful", "", at), "Jo's glasses are beside the blue chair")
+        reply, _ = ConversationService(self.store, OfflineCompanion(), self.notifier).respond("Where are my glasses?", at)
+        self.assertIn("blue chair", reply)
+
+    def test_unrelated_approved_memory_is_not_added_to_model_context(self):
+        at = datetime.now(UTC)
+        self.store.append_turn(ConversationTurn("user", "Where are my glasses?", at))
+        turn_id = self.store.append_turn(ConversationTurn("assistant", "Check nearby.", at))
+        self.store.save_feedback(ResponseFeedback("f2", turn_id, "", "", "helpful", "", at), "Jo enjoys jazz music")
+
+        class CapturingModel:
+            def __init__(self): self.history = []
+            def reply(self, history, profile=None): self.history = history; return "Hello."
+
+        model = CapturingModel()
+        ConversationService(self.store, model, self.notifier).respond("What time is it?", at)
+        self.assertNotEqual(model.history[0].role, "system")
+
+    def test_medication_memory_is_never_injected(self):
+        at = datetime.now(UTC)
+        self.store.append_turn(ConversationTurn("user", "Which pills should I take?", at))
+        turn_id = self.store.append_turn(ConversationTurn("assistant", "Check the label.", at))
+        self.store.save_feedback(ResponseFeedback("f-med", turn_id, "", "", "helpful", "", at), "Take two medication pills")
+
+        class CapturingModel:
+            def __init__(self): self.history = []
+            def reply(self, history, profile=None): self.history = history; return "Check the label."
+
+        model = CapturingModel()
+        ConversationService(self.store, model, self.notifier).respond("Which medication dose should I take?", at)
+        self.assertNotEqual(model.history[0].role, "system")
 
     def test_transcriber_sends_multipart_audio(self):
         class Response(BytesIO):

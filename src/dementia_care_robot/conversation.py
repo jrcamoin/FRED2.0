@@ -19,6 +19,12 @@ class OfflineCompanion:
     def reply(self, history: Sequence[ConversationTurn], profile: CareProfile | None = None) -> str:
         last = history[-1].content.strip().lower()
 
+        approved = next((turn.content for turn in history if turn.role == "system" and turn.content.startswith("Caregiver-approved memories")), "")
+        if approved:
+            memory = next((line[2:].strip() for line in approved.splitlines() if line.startswith("- ")), "")
+            if memory:
+                return f"Your caregiver has confirmed: {memory}"
+
         missing_items = {
             "keys": (r"\b(key|keys)\b", "by the door, on a nearby table, in your coat or bag, or in the usual basket or bowl"),
             "glasses": (r"\b(glasses|spectacles)\b", "beside your bed or chair, in the bathroom, on a table, or in their usual case"),
@@ -128,6 +134,24 @@ class ConversationService:
         else:
             if assessment.risk is RiskLevel.CAREGIVER:
                 self.notifier.notify(assessment)
-            reply = self.model.reply(self.store.conversation(), self.store.care_profile())
+            history = self.store.conversation()
+            memories = self._relevant_memories(text)
+            if memories:
+                instruction = "Caregiver-approved memories (use only when relevant; do not infer beyond them):\n" + "\n".join(f"- {memory}" for memory in memories)
+                history = [ConversationTurn("system", instruction, at)] + history
+            reply = self.model.reply(history, self.store.care_profile())
         self.store.append_turn(ConversationTurn("assistant", reply, at))
         return reply, assessment.risk
+
+    def _relevant_memories(self, text: str) -> list[str]:
+        blocked=r"\b(medicine|medication|pill|pills|dose|dosage|prescription|diagnos|bank|account|password|pin number)\b"
+        if re.search(blocked,text.lower()):return []
+        ignored={"about","after","again","could","from","have","please","that","their","there","these","they","this","what","when","where","which","with","would","your"}
+        words={w for w in re.findall(r"[a-z0-9']+",text.lower()) if len(w)>3 and w not in ignored}
+        ranked=[]
+        for memory in self.store.approved_memories():
+            if re.search(blocked,memory.content.lower()):continue
+            memory_words=set(re.findall(r"[a-z0-9']+",memory.content.lower()))
+            overlap=len(words & memory_words)
+            if overlap:ranked.append((overlap,memory.content))
+        return [content for _,content in sorted(ranked,reverse=True)[:3]]
