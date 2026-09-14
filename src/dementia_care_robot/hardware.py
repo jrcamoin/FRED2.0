@@ -1,9 +1,60 @@
+import os
+import platform
+import shutil
+import subprocess
+import sys
 import threading
 import termios
 import tty
 from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
+
+
+def discover_pico_device(dev_root: Path = Path("/dev")) -> str | None:
+    """Find a Pico USB CDC device, preferring stable by-id names."""
+    by_id = dev_root / "serial" / "by-id"
+    stable = sorted(by_id.glob("*")) if by_id.is_dir() else []
+    likely = [path for path in stable if any(word in path.name.lower() for word in ("pico", "rp2", "micropython"))]
+    candidates = likely + [path for path in stable if path not in likely] + sorted(dev_root.glob("ttyACM*"))
+    return str(candidates[0]) if candidates else None
+
+
+def hardware_report(pico_device: str = "auto") -> list[tuple[str, bool, str]]:
+    """Return Raspberry Pi hardware readiness checks without changing hardware."""
+    model_path = Path("/proc/device-tree/model")
+    model = model_path.read_text(errors="replace").rstrip("\x00\n") if model_path.is_file() else platform.platform()
+    device = discover_pico_device() if pico_device == "auto" else pico_device
+    pico_found = bool(device and Path(device).exists())
+    pico_access = bool(pico_found and os.access(device, os.R_OK | os.W_OK))
+    display = Path("/dev/fb0").exists() or Path("/dev/dri/card0").exists()
+    playback, capture = _command_has_device("aplay"), _command_has_device("arecord")
+    checks = [
+        ("Model", "Raspberry Pi 3 Model B" in model, model),
+        ("Python", sys.version_info >= (3, 11), platform.python_version()),
+        ("Pico", pico_found, device or "not found; connect the Pico with a data-capable USB cable"),
+        ("Pico access", pico_access, "read/write available" if pico_access else "device not found" if not pico_found else "permission denied; add the service user to dialout"),
+        ("Display", display, "framebuffer/DRM detected" if display else "no framebuffer or DRM display detected"),
+        ("Audio output", playback, "ALSA playback device detected" if playback else "no ALSA playback device detected; run aplay -l"),
+        ("Microphone", capture, "ALSA capture device detected" if capture else "no ALSA capture device detected; run arecord -l"),
+    ]
+    if shutil.which("vcgencmd"):
+        try:
+            value = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=2).stdout.strip()
+            checks.append(("Power", value == "throttled=0x0", value or "unable to read throttling status"))
+        except (OSError, subprocess.SubprocessError):
+            checks.append(("Power", False, "vcgencmd failed"))
+    return checks
+
+
+def _command_has_device(command: str) -> bool:
+    if not shutil.which(command):
+        return False
+    try:
+        result = subprocess.run([command, "-l"], capture_output=True, text=True, timeout=3)
+        return result.returncode == 0 and "card " in result.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 class PicoBridge:
@@ -20,6 +71,8 @@ class PicoBridge:
         self._connected = threading.Event()
         self._write_lock = threading.Lock()
         self._terminal_settings = None
+        self.resolved_device: str | None = None
+        self.last_error = ""
 
     @property
     def connected(self) -> bool:
@@ -41,15 +94,20 @@ class PicoBridge:
     def _connection_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self._stream = Path(self.device).open("r+b", buffering=0)
+                resolved = discover_pico_device() if self.device == "auto" else self.device
+                if not resolved:
+                    raise FileNotFoundError("No Pico USB serial device found")
+                self.resolved_device = resolved
+                self._stream = Path(resolved).open("r+b", buffering=0)
                 if self._stream.isatty():
                     self._terminal_settings = termios.tcgetattr(self._stream.fileno())
                     tty.setraw(self._stream.fileno())
                 self._connected.set()
+                self.last_error = ""
                 self.set_led("idle")
                 self._read_loop()
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as error:
+                self.last_error = str(error)
             finally:
                 self._close_stream()
             self._stop.wait(2)

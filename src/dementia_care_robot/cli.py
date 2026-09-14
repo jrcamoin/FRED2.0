@@ -22,6 +22,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Dementia care robot prototype")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="run a console interaction")
+    check = commands.add_parser("hardware-check", help="check Raspberry Pi display, audio, power, and Pico access")
+    check.add_argument("--pico", default="auto", help="Pico device path or auto")
     export = commands.add_parser("export-feedback", help="export caregiver-reviewed examples as private JSONL")
     export.add_argument("--data-dir", default="data")
     export.add_argument("--output", required=True)
@@ -32,13 +34,20 @@ def main() -> None:
     web.add_argument("--open", action="store_true", dest="open_browser")
     web.add_argument("--certfile", help="TLS certificate required for microphone access from another device")
     web.add_argument("--keyfile", help="TLS private key")
-    web.add_argument("--pico", help="Pico USB serial device, for example /dev/ttyACM0")
+    web.add_argument("--pico", help="Pico USB serial device, or auto to discover it")
     mode = web.add_mutually_exclusive_group()
     mode.add_argument("--offline", action="store_true", help="disable model API calls and use the built-in testing companion")
     mode.add_argument("--local-ai", action="store_true", help="generate replies locally with Ollama (default model: llama3.2:3b)")
     args = parser.parse_args()
     if args.command == "demo":
         run_demo()
+    elif args.command == "hardware-check":
+        from .hardware import hardware_report
+        failed=False
+        for name,ok,detail in hardware_report(args.pico):
+            print(f"{'PASS' if ok else 'FAIL'}  {name}: {detail}")
+            failed = failed or not ok
+        raise SystemExit(1 if failed else 0)
     elif args.command == "export-feedback":
         from .storage import SQLiteStore
         rows=SQLiteStore(Path(args.data_dir)/"robot.db").feedback()

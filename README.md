@@ -111,7 +111,7 @@ dementia-care-robot export-feedback --data-dir data --output private-feedback.js
 
 The command creates the file with owner-only permissions. Review and de-identify it before moving it off the device or using it with an external service.
 
-For the Raspberry Pi 2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Start the Pico bridge with `--pico /dev/ttyACM0`.
+For the Raspberry Pi 3 Model B v1.2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Check attached devices with `dementia-care-robot hardware-check`, then start the bridge with `--pico auto`.
 
 ## Current prototype limitations
 

@@ -13,7 +13,7 @@ from dementia_care_robot.conversation import ConversationService, OfflineCompani
 from dementia_care_robot.coordinator import CareCoordinator
 from dementia_care_robot.models import AlertDelivery, CareProfile, CaregiverContact, ConversationTurn, FamiliarMedia, Reminder, ReminderStatus, ResponseFeedback, RiskLevel
 from dementia_care_robot.security import DeviceSecrets
-from dementia_care_robot.hardware import PicoBridge
+from dementia_care_robot.hardware import PicoBridge, discover_pico_device
 from dementia_care_robot.scheduler import ReminderScheduler
 from dementia_care_robot.storage import SQLiteStore
 from dementia_care_robot.speech import OpenAITranscriber
@@ -119,6 +119,8 @@ class FeatureTests(unittest.TestCase):
         self.assertIn('data-server-transcription="true"', page)
         self.assertIn("new MediaRecorder", page)
         self.assertIn("'/api/voice'", page)
+        self.assertIn("'/api/status'", page)
+        self.assertIn("hardware('listening')", page)
         self.assertIn("getUserMedia({audio:true})", page)
 
     def test_local_ai_uses_ollama_without_remote_transcription(self):
@@ -323,6 +325,23 @@ class FeatureTests(unittest.TestCase):
             self.assertFalse(bridge.connected)
         finally:
             bridge.close()
+
+    def test_pico_auto_discovery_prefers_stable_matching_device(self):
+        dev = Path(self.temp.name) / "dev"
+        by_id = dev / "serial" / "by-id"
+        by_id.mkdir(parents=True)
+        generic = by_id / "usb-Other_Serial_Device"
+        pico = by_id / "usb-MicroPython_Board_in_FS_mode"
+        generic.touch(); pico.touch()
+        (dev / "ttyACM0").touch()
+        self.assertEqual(discover_pico_device(dev), str(pico))
+
+    def test_pico_auto_discovery_falls_back_to_ttyacm(self):
+        dev = Path(self.temp.name) / "dev-fallback"
+        dev.mkdir()
+        device = dev / "ttyACM1"
+        device.touch()
+        self.assertEqual(discover_pico_device(dev), str(device))
 
 
 if __name__ == "__main__": unittest.main()

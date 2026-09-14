@@ -4,7 +4,7 @@
 
 | Part | Role |
 |---|---|
-| Raspberry Pi 2 Model B v1.2 | Runs the Python web server, remote Whisper/LLM calls, storage, and LCD kiosk browser |
+| Raspberry Pi 3 Model B v1.2 | Runs the Python web server, remote Whisper/LLM calls, storage, Wi-Fi/Ethernet, and LCD kiosk browser |
 | Raspberry Pi Pico / RP2040 | Owns LED timing and reads physical switches over USB serial |
 | LCD screen | HDMI display for the FRED dashboard; touch, mouse, or switches provide input |
 | Microphone | Prefer a USB microphone or USB audio adapter connected to the device running the browser |
@@ -12,7 +12,7 @@
 | Addressable LED ring | Connect to Pico; shows idle, listening, thinking, speaking, and alert states |
 | Switches | Connect to Pico as HELP and ACTION inputs |
 
-The current voice UI records through the browser. If Chromium runs in kiosk mode on the Pi, it uses the Pi's microphone and speakers. If the page runs on a tablet, it uses the tablet's microphone and speakers. The Pi 2 should call remote transcription and language-model services; it is not a practical target for running Whisper or a modern LLM locally.
+The current voice UI records through the browser. If Chromium runs in kiosk mode on the Pi, it uses the Pi's microphone and speakers. If the page runs on a tablet, it uses the tablet's microphone and speakers. The Pi 3 should call remote transcription and language-model services; it is not a practical target for running Whisper or a modern LLM locally.
 
 ## Pico default wiring
 
@@ -23,7 +23,7 @@ The defaults are at the top of `firmware/pico/main.py` and can be changed there.
 | LED ring data | GP16 through a suitable logic-level shifter when the ring is powered at 5 V |
 | HELP switch | GP14 to switch, other switch terminal to GND |
 | ACTION switch | GP15 to switch, other switch terminal to GND |
-| Pi communication | Pico USB port to a Pi USB port, normally `/dev/ttyACM0` |
+| Pi communication | Pico USB data port to a Pi USB port; FRED discovers it automatically |
 
 The switches use internal pull-ups and are active-low. Firmware debounce is included.
 
@@ -42,10 +42,10 @@ Important electrical constraints:
 1. Install MicroPython on the Pico.
 2. Edit `LED_COUNT` and pin constants in `firmware/pico/main.py` to match the actual hardware.
 3. Copy that file to the Pico as `main.py` using Thonny or `mpremote`.
-4. Connect the Pico to the Pi by USB and find its device:
+4. Connect the Pico's data-capable USB port to the Pi, then run the diagnostic:
 
 ```bash
-ls -l /dev/ttyACM*
+dementia-care-robot hardware-check
 ```
 
 The Pico protocol is deliberately small:
@@ -60,19 +60,20 @@ Pressing HELP invokes the existing urgent caregiver-notification path. At presen
 
 ## Run on the Pi and LCD
 
-Install a currently supported 32-bit Raspberry Pi OS Bookworm image, attach the LCD over HDMI, and connect the Pi to the internet using Ethernet or a compatible USB Wi-Fi adapter. Bookworm supplies Python 3.11 on the Pi 2's ARMv7 architecture. The Pi 2 Model B does not have built-in Wi-Fi.
+Install the current Raspberry Pi OS Desktop image (Debian Trixie) for the Raspberry Pi 3 Model B v1.2 and attach the LCD over HDMI. Both 32-bit and 64-bit Raspberry Pi OS support the Pi 3; the 32-bit image leaves more of its 1 GB RAM available for Chromium. Raspberry Pi OS includes Python 3 and the desktop image includes Chromium. The Pi 3 Model B has built-in 2.4 GHz Wi-Fi and Ethernet. See the official [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/os.html) and [Pi 3 Model B specifications](https://www.raspberrypi.com/products/raspberry-pi-3-model-b/).
 
 ```bash
 sudo apt update
-sudo apt install python3-venv python3-cryptography chromium
+sudo apt install python3-venv python3-cryptography chromium alsa-utils
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --no-deps -e .
 export ROBOT_LLM_API_KEY="your-key"
-dementia-care-robot web --host 0.0.0.0 --pico /dev/ttyACM0
+dementia-care-robot hardware-check
+dementia-care-robot web --host 0.0.0.0 --pico auto
 ```
 
-Using Raspberry Pi OS's `python3-cryptography` package avoids compiling Rust-backed cryptography code on the Pi 2. Verify the install before configuring startup:
+Using Raspberry Pi OS's `python3-cryptography` package avoids compiling Rust-backed cryptography code on the Pi 3. Verify the install before configuring startup:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print('cryptography OK')"
@@ -83,7 +84,7 @@ For the Pi-attached LCD, launch Chromium in kiosk mode with `chromium --kiosk --
 
 For an appliance-style installation, copy the repository to `/opt/fred`, create a dedicated `fred` system user, create `/var/lib/fred` owned by that user, install into `/opt/fred/.venv`, and install `deploy/fred.service` as `/etc/systemd/system/fred.service`. The supplied unit grants the standard `dialout`, `video`, and `audio` supplementary groups. Review the unit paths before starting it.
 
-Prefer the Pico's stable `/dev/serial/by-id/...` path over `/dev/ttyACM0`, whose number can change. Put the override in `/opt/fred/.env`, then enable the service:
+The supplied service uses automatic Pico discovery and prefers `/dev/serial/by-id/...` before trying `/dev/ttyACM*`. If more than one USB serial device is connected, set the Pico's stable path explicitly in `/opt/fred/.env`:
 
 ```bash
 ls -l /dev/serial/by-id/
@@ -92,6 +93,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now fred
 sudo systemctl status fred
 ```
+
+If `hardware-check` reports `Pico access: permission denied`, verify that the running account has the `dialout` group, then sign out or restart the service so the new group is applied. If it reports no microphone or speaker, use `arecord -l` and `aplay -l` to confirm ALSA sees the USB audio device. A charge-only USB cable will power a Pico but will never create a serial device.
 
 The caregiver dashboard reports network reachability, free storage, uptime, Pico connection, last resident check-in, and Raspberry Pi under-voltage/throttling when `vcgencmd` is installed. Treat an under-voltage warning as a power-supply or cable fault; do not hide it in production.
 
