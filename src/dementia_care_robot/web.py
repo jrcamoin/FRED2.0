@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from .api_errors import RemoteServiceError
-from .adapters import ConsoleSpeaker
+from .adapters import ConsoleSpeaker, PiSpeaker
 from .conversation import ConversationService, OfflineCompanion, OpenAICompatibleModel
 from .coordinator import CareCoordinator
 from .hardware import PicoBridge
@@ -36,6 +36,7 @@ class RobotApplication:
     def __init__(self,data_dir:Path,pico_device=None):
         data_dir.mkdir(parents=True,exist_ok=True); self.data_dir=data_dir; self.media_dir=data_dir/"media"; self.media_dir.mkdir(exist_ok=True)
         self.secrets=DeviceSecrets(data_dir); self.store=SQLiteStore(data_dir/"robot.db",self.secrets)
+        self.pi_speaker=PiSpeaker(os.environ.get("ROBOT_AUDIO_DEVICE","default")) if os.environ.get("ROBOT_PI_SPEECH","").lower() in {"1","true","yes","on"} else None
         self.notifier=DeliveryNotifier(self.store); self.scheduler=ReminderScheduler(self.store,CareCoordinator(ConsoleSpeaker(),self.notifier))
         model=OpenAICompatibleModel.from_environment() or OfflineCompanion(); self.generated_responses=isinstance(model,OpenAICompatibleModel); self.response_mode="online" if self.generated_responses else "offline"
         self.conversation=ConversationService(self.store,model,self.notifier); self.transcriber=OpenAITranscriber.from_environment(); self.server_transcription=self.transcriber is not None
@@ -49,6 +50,16 @@ class RobotApplication:
             if delivered:self.store.acknowledge_reminder(delivered[-1].reminder_id,ReminderStatus.ACKNOWLEDGED,datetime.now(UTC)); self.set_status("idle")
     def set_status(self,state):
         if self.pico:self.pico.set_led(state)
+    def speak_reply(self, reply):
+        if not self.pi_speaker:
+            return {"speech_output": "browser"}
+        try:
+            self.pi_speaker.say(reply)
+            return {"speech_output": "pi"}
+        except (OSError, subprocess.SubprocessError):
+            return {"speech_output": "pi", "speech_error": "Pi audio playback failed. Check the speaker output and audio permissions."}
+        finally:
+            self.set_status("idle")
     def voice_turn(self,audio,content_type):
         if not self.transcriber:raise SpeechNotConfigured("Voice transcription is unavailable. Please type while testing.")
         self.set_status("thinking")
@@ -87,7 +98,7 @@ def _page(app,notice=""):
     return _layout("FRED",body)
 
 def _resident_js():
-    return """const q=x=>document.getElementById(x),chat=q('chat'),form=q('messageForm'),input=q('messageInput'),status=q('voiceStatus'),talk=q('talkButton');function add(role,text){let d=document.createElement('div');d.className='turn '+role;d.textContent=text;chat.append(d);chat.scrollTop=chat.scrollHeight}function hardware(state){fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state})}).catch(()=>{})}function speak(text){if('speechSynthesis'in window){let u=new SpeechSynthesisUtterance(text);u.onend=()=>hardware('idle');u.onerror=()=>hardware('idle');window.speechSynthesis.speak(u)}else hardware('idle')}async function send(message){add('user',message);status.textContent='Thinking…';try{let r=await fetch('/api/conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The request failed.');add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}}form.onsubmit=e=>{e.preventDefault();let t=input.value.trim();if(t){input.value='';send(t)}};const server=talk.dataset.serverTranscription==='true',SR=window.SpeechRecognition||window.webkitSpeechRecognition;let recorder,chunks=[],stream;async function uploadRecording(blob){status.textContent='Thinking…';let bytes=new Uint8Array(await blob.arrayBuffer()),binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));try{let r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(binary),content_type:blob.type||'audio/webm'})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The recording could not be processed.');add('user',d.transcript);add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}finally{talk.disabled=false}}if(server&&navigator.mediaDevices&&window.MediaRecorder){talk.disabled=false;talk.onclick=async()=>{if(recorder&&recorder.state==='recording'){recorder.stop();talk.textContent='Start speaking';return}try{stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.onstop=()=>{stream.getTracks().forEach(t=>t.stop());talk.disabled=true;uploadRecording(new Blob(chunks,{type:recorder.mimeType||'audio/webm'}))};recorder.start();hardware('listening');talk.textContent='Stop speaking';status.textContent='Listening…'}catch(e){status.textContent='Microphone access failed. Please type below.'}}}else if(SR){talk.disabled=false;talk.onclick=()=>{let r=new SR();r.lang=navigator.language;r.onresult=e=>{hardware('idle');input.value=e.results[0][0].transcript;status.textContent='Check what I heard, then press Send.'};r.onerror=()=>{hardware('idle');status.textContent='I could not hear that. Please type below.'};r.start();hardware('listening');status.textContent='Listening…'}}else{talk.disabled=true;status.textContent='Voice is unavailable in this browser. Please type below.'}"""
+    return """const q=x=>document.getElementById(x),chat=q('chat'),form=q('messageForm'),input=q('messageInput'),status=q('voiceStatus'),talk=q('talkButton');function add(role,text){let d=document.createElement('div');d.className='turn '+role;d.textContent=text;chat.append(d);chat.scrollTop=chat.scrollHeight}function hardware(state){fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state})}).catch(()=>{})}function speak(text){if('speechSynthesis'in window){let u=new SpeechSynthesisUtterance(text);u.onend=()=>hardware('idle');u.onerror=()=>hardware('idle');window.speechSynthesis.speak(u)}else hardware('idle')}async function send(message){add('user',message);status.textContent='Thinking…';try{let r=await fetch('/api/conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The request failed.');add('assistant',d.reply);status.textContent=d.speech_error||'Ready';if(d.speech_output!=='pi')speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}}form.onsubmit=e=>{e.preventDefault();let t=input.value.trim();if(t){input.value='';send(t)}};const server=talk.dataset.serverTranscription==='true',SR=window.SpeechRecognition||window.webkitSpeechRecognition;let recorder,chunks=[],stream;async function uploadRecording(blob){status.textContent='Thinking…';let bytes=new Uint8Array(await blob.arrayBuffer()),binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));try{let r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(binary),content_type:blob.type||'audio/webm'})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The recording could not be processed.');add('user',d.transcript);add('assistant',d.reply);status.textContent=d.speech_error||'Ready';if(d.speech_output!=='pi')speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}finally{talk.disabled=false}}if(server&&navigator.mediaDevices&&window.MediaRecorder){talk.disabled=false;talk.onclick=async()=>{if(recorder&&recorder.state==='recording'){recorder.stop();talk.textContent='Start speaking';return}try{stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.onstop=()=>{stream.getTracks().forEach(t=>t.stop());talk.disabled=true;uploadRecording(new Blob(chunks,{type:recorder.mimeType||'audio/webm'}))};recorder.start();hardware('listening');talk.textContent='Stop speaking';status.textContent='Listening…'}catch(e){status.textContent='Microphone access failed. Please type below.'}}}else if(SR){talk.disabled=false;talk.onclick=()=>{let r=new SR();r.lang=navigator.language;r.onresult=e=>{hardware('idle');input.value=e.results[0][0].transcript;status.textContent='Check what I heard, then press Send.'};r.onerror=()=>{hardware('idle');status.textContent='I could not hear that. Please type below.'};r.start();hardware('listening');status.textContent='Listening…'}}else{talk.disabled=true;status.textContent='Voice is unavailable in this browser. Please type below.'}"""
 
 def _login(notice=""):
     return _layout("Caregiver sign in",f'<section class="card" style="max-width:480px;margin:auto"><h1>Caregiver sign in</h1>{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}<form method="post" action="/login"><label>Password<input type="password" name="password" required></label><button>Sign in</button></form></section>',True)
@@ -164,7 +175,7 @@ def make_handler(app):
                 if not 0<length<=16384:raise ValueError("Message is too large or empty.")
                 data=json.loads(self.rfile.read(length)); message=data.get("message") if isinstance(data,dict) else None
                 if not isinstance(message,str) or not message.strip() or len(message)>2000:raise ValueError("Enter a valid message of 1–2000 characters.")
-                app.set_status("thinking"); reply,risk=app.conversation.respond(message.strip()); app.set_status("alert" if risk is RiskLevel.URGENT else "speaking"); app.store.record_health("check_in","conversation"); self.json({"reply":reply,"risk":risk.value});return
+                app.set_status("thinking"); reply,risk=app.conversation.respond(message.strip()); app.set_status("alert" if risk is RiskLevel.URGENT else "speaking"); app.store.record_health("check_in","conversation"); self.json({"reply":reply,"risk":risk.value,**app.speak_reply(reply)});return
             except (ValueError,json.JSONDecodeError) as e:app.set_status("idle");self.json({"error":str(e)},400);return
             except RemoteServiceError as e:app.set_status("idle");self.json({"error":str(e)},502);return
         if p=="/api/status":
@@ -177,7 +188,7 @@ def make_handler(app):
         if p=="/api/voice":
             try:
                 if length>12_000_000:raise ValueError("Recording is too large")
-                data=json.loads(self.rfile.read(length)); audio=base64.b64decode(data["audio"],validate=True); transcript,reply,risk=app.voice_turn(audio,str(data.get("content_type","audio/webm"))); app.store.record_health("check_in","voice");self.json({"transcript":transcript,"reply":reply,"risk":risk});return
+                data=json.loads(self.rfile.read(length)); audio=base64.b64decode(data["audio"],validate=True); transcript,reply,risk=app.voice_turn(audio,str(data.get("content_type","audio/webm"))); app.store.record_health("check_in","voice");self.json({"transcript":transcript,"reply":reply,"risk":risk,**app.speak_reply(reply)});return
             except SpeechNotConfigured as e:self.json({"error":str(e)},503);return
             except Exception as e:self.json({"error":str(e)},400);return
         if p.startswith("/reminder/"):

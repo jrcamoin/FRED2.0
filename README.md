@@ -89,6 +89,35 @@ Conversation text and recorded clips are sent to the configured provider only wh
 
 ## Display on a tablet
 
+### Pi speaker output without browser voices
+
+If Chromium on the Pi has no speech voices, install local speech playback:
+
+```bash
+sudo apt install espeak-ng alsa-utils
+```
+
+Add these settings to your `.env` on the Pi and restart FRED:
+
+```dotenv
+ROBOT_PI_SPEECH=true
+ROBOT_AUDIO_DEVICE=plughw:CARD=Headphones,DEV=0
+```
+
+Use `default` instead of the Headphones device to use ALSA's default output.
+For offline testing from the project directory:
+
+```bash
+PYTHONPATH=src python3 -m dementia_care_robot.cli web --offline
+```
+
+Typed and transcribed conversation replies now play on the server's speakers;
+the browser does not speak a second copy. Replies appear after playback finishes.
+Playback failures still return the reply text and show an audio error in the UI.
+The server account needs permission to use the audio device (the supplied service
+already includes the `audio` group). This setting does not add offline microphone
+recognition or change scheduled reminder speech.
+
 For visual testing on the same computer, `dementia-care-robot web --open` is sufficient. To serve the interface to a tablet on the same trusted Wi-Fi network:
 
 ```bash
