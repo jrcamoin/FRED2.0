@@ -1,3 +1,5 @@
+"""Simple console adapters used by development and the current prototype."""
+
 from .models import Assessment
 
 

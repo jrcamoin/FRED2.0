@@ -1,3 +1,5 @@
+"""Interfaces that keep care logic independent of specific hardware/providers."""
+
 from typing import Protocol, Sequence
 
 from .models import Assessment, CareProfile, ConversationTurn, FamiliarMedia

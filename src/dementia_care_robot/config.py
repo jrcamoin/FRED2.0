@@ -1,3 +1,5 @@
+"""Load the small set of environment variables used to configure FRED."""
+
 import os
 from pathlib import Path
 

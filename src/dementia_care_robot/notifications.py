@@ -1,3 +1,5 @@
+"""Deliver caregiver alerts through SMS or HTTPS webhooks with retries."""
+
 import base64
 import json
 import os
@@ -18,12 +20,15 @@ class DeliveryNotifier:
         self.store, self.retries = store, retries
 
     def notify(self, assessment: Assessment) -> None:
+        # Network work runs in daemon threads so an unavailable provider cannot
+        # freeze the resident interface or reminder scheduler.
         for contact in self.store.contacts():
             now=datetime.now(UTC); item=AlertDelivery(uuid.uuid4().hex,contact.contact_id,assessment.reason,assessment.risk,"queued",0,now,now)
             self.store.save_delivery(item)
             threading.Thread(target=self._deliver,args=(item,contact.channel,contact.destination),daemon=True).start()
 
     def _deliver(self, item, channel, destination):
+        """Attempt delivery with short exponential backoff and persist each state."""
         last=item
         for attempt in range(1,self.retries+1):
             try:

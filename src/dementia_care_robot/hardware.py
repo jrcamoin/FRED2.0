@@ -1,3 +1,5 @@
+"""Raspberry Pi diagnostics and the USB serial bridge to Pico firmware."""
+
 import os
 import platform
 import shutil
@@ -92,6 +94,7 @@ class PicoBridge:
             self._thread.join(timeout=1)
 
     def _connection_loop(self) -> None:
+        """Reconnect indefinitely so unplugging the Pico does not stop FRED."""
         while not self._stop.is_set():
             try:
                 resolved = discover_pico_device() if self.device == "auto" else self.device
@@ -154,6 +157,7 @@ class PicoBridge:
             self.handle_line(line.decode(errors="replace"))
 
     def handle_line(self, line: str) -> None:
+        """Parse the deliberately small `SWITCH name action` Pico protocol."""
         parts = line.strip().split()
         if len(parts) == 3 and parts[0] == "SWITCH" and parts[2] in {"PRESS", "RELEASE"}:
             self.on_event(parts[1].lower(), parts[2].lower())

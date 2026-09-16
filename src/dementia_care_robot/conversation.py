@@ -1,3 +1,5 @@
+"""Conversation engines and the service that applies safety before replying."""
+
 import json
 import os
 import re
@@ -120,14 +122,19 @@ class OpenAICompatibleModel:
 
 
 class ConversationService:
+    """Screen, store, personalize, and answer one resident conversation turn."""
+
     def __init__(self, store: SQLiteStore, model: LanguageModel, notifier: CaregiverNotifier, policy: SafetyPolicy | None = None) -> None:
         self.store, self.model, self.notifier = store, model, notifier
         self.policy = policy or SafetyPolicy()
 
     def respond(self, text: str, now: datetime | None = None) -> tuple[str, RiskLevel]:
+        """Return a reply and risk level while preserving the conversation."""
         at = now or datetime.now(UTC)
         assessment = self.policy.assess_conversation(CheckIn(text, at))
         self.store.append_turn(ConversationTurn("user", text.strip(), at))
+        # Urgent language never reaches a generative model: use the reviewed
+        # safety response and alert the configured caregiver immediately.
         if assessment.risk is RiskLevel.URGENT:
             reply = assessment.supportive_message
             self.notifier.notify(assessment)
@@ -144,6 +151,9 @@ class ConversationService:
         return reply, assessment.risk
 
     def _relevant_memories(self, text: str) -> list[str]:
+        """Select up to three keyword-related, caregiver-approved memories."""
+        # Never inject memories for medication, diagnosis, financial, or secret
+        # requests, even if a caregiver previously saved matching text.
         blocked=r"\b(medicine|medication|pill|pills|dose|dosage|prescription|diagnos|bank|account|password|pin number)\b"
         if re.search(blocked,text.lower()):return []
         ignored={"about","after","again","could","from","have","please","that","their","there","these","they","this","what","when","where","which","with","would","your"}

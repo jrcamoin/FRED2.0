@@ -1,3 +1,5 @@
+"""Device-local encryption, password hashing, and signed browser sessions."""
+
 import base64
 import hashlib
 import hmac
@@ -14,6 +16,8 @@ class DeviceSecrets:
     """Device-local authenticated encryption and signed caregiver sessions."""
 
     def __init__(self, data_dir: Path) -> None:
+        # The key is deliberately outside SQLite. Losing it makes encrypted
+        # resident data unrecoverable, so deployments must back it up securely.
         self.key_path = data_dir / ".device-key"
         if not self.key_path.exists():
             self.key_path.write_bytes(Fernet.generate_key())
@@ -57,11 +61,13 @@ class DeviceSecrets:
             return False
 
     def issue_session(self, ttl_seconds: int = 43_200) -> str:
+        """Create a self-contained session token signed by this device."""
         payload = base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + ttl_seconds, "nonce": secrets.token_hex(8)}).encode()).decode()
         signature = hmac.new(self.signing_key, payload.encode(), hashlib.sha256).hexdigest()
         return payload + "." + signature
 
     def valid_session(self, token: str) -> bool:
+        """Accept only unmodified tokens whose expiration time has not passed."""
         try:
             payload, signature = token.split(".", 1)
             valid = hmac.compare_digest(signature, hmac.new(self.signing_key, payload.encode(), hashlib.sha256).hexdigest())

@@ -16,7 +16,7 @@ It is **not a medical device or emergency service**. It must not diagnose, recom
 
 ## Caregiver setup and Raspberry Pi deployment
 
-On first launch, open `/caregiver` and complete the three-step setup: create a caregiver password, choose quiet hours, and add an SMS or HTTPS push-webhook contact. The resident screen at `/` deliberately has no login; caregiver configuration and personal-data controls require an authenticated session.
+Open `/caregiver` to schedule reminders, upload familiar media, and configure contacts. Caregiver authentication is temporarily disabled for local prototyping; the preserved onboarding, login, and session code can be restored by setting `CAREGIVER_AUTH_ENABLED = True` in `web.py`.
 
 Personal profile text, conversations, contact destinations, reminder messages, photos, and voice notes are encrypted at rest using a device key stored at `data/.device-key` with owner-only permissions. Back up that key separately: encrypted data cannot be recovered without it. For production, also enable Raspberry Pi OS full-disk encryption, HTTPS, firewalling, automatic security updates, and physical protection of the SD card.
 
@@ -29,13 +29,30 @@ Python 3.11+ is required. The only runtime package is `cryptography`.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -r requirements.txt
 dementia-care-robot demo
 dementia-care-robot web --open
 python -m unittest discover -s tests -v
 ```
 
 Open `http://127.0.0.1:8080` if the browser does not open automatically. The dashboard lets you schedule reminders, add familiar images by URL, create a caregiver-provided Care Profile, and talk or type to FRED. Profile details such as routines, comforting interests, and usual item locations are used when relevant so FRED can give more familiar, practical answers. Data is stored under `data/`, which is ignored by Git. The console acts as the current caregiver notification hardware.
+
+### Linux setup
+
+On Debian, Ubuntu, or Raspberry Pi OS, install Python's virtual-environment support first:
+
+```bash
+sudo apt update
+sudo apt install python3 python3-venv
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+dementia-care-robot web --open
+```
+
+Desktop Linux users need a browser with microphone permission. Raspberry Pi hardware checks also use `alsa-utils`; install it with `sudo apt install alsa-utils`. USB Pico access normally requires membership in the `dialout` group. The GitHub Actions workflow runs the complete test suite on Ubuntu with Python 3.11, 3.12, and 3.13 for every push and pull request.
 
 ## Optional LLM conversation
 
@@ -117,7 +134,7 @@ For the Raspberry Pi 3 Model B v1.2 + Pico + LCD + microphone + speakers + LED-r
 
 - Spoken conversation responses use the browser's installed voice. Configured SMS and push-webhook alerts still require end-to-end testing and are not an emergency service.
 - Photo URLs may disclose the viewer's IP to the image host. Local upload/copy support is the next privacy milestone.
-- The resident screen is intentionally unauthenticated. Caregiver pages require the password created during onboarding. Do not expose the server to a public or untrusted network.
+- Both resident and caregiver pages are temporarily unauthenticated for local prototyping. Do not expose the server to a public or untrusted network.
 - Reminder times use the device's local timezone at entry.
 - Sensitive SQLite fields and uploaded media are encrypted, but metadata and database structure are visible. Do not treat this as a substitute for full-disk encryption.
 

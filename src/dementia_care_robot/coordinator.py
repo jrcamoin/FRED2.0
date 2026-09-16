@@ -1,9 +1,13 @@
+"""Coordinate safety decisions with speech, displays, and caregiver alerts."""
+
 from .models import Assessment, CheckIn, FamiliarMedia, Reminder, RiskLevel
 from .ports import CaregiverNotifier, MediaDisplay, Speaker
 from .safety import SafetyPolicy
 
 
 class CareCoordinator:
+    """Run simple care workflows through replaceable hardware adapters."""
+
     def __init__(self, speaker: Speaker, notifier: CaregiverNotifier, policy: SafetyPolicy | None = None) -> None:
         self._speaker = speaker
         self._notifier = notifier

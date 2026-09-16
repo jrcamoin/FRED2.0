@@ -1,3 +1,5 @@
+"""Conservative, deterministic safety screening for resident messages."""
+
 import re
 
 from .models import Assessment, CheckIn, RiskLevel

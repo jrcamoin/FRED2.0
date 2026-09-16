@@ -1,3 +1,5 @@
+"""Command-line entry point for demos, diagnostics, exports, and the web app."""
+
 import argparse
 import json
 import os

@@ -1,3 +1,5 @@
+"""SQLite persistence with encryption at the boundary for personal fields."""
+
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
@@ -27,6 +29,7 @@ class SQLiteStore:
         finally: db.close()
 
     def _initialize(self) -> None:
+        """Create the current schema and apply small upgrades to older databases."""
         with self._database() as db:
             db.executescript("""
             CREATE TABLE IF NOT EXISTS reminders(id TEXT PRIMARY KEY,message TEXT NOT NULL,due_at TEXT NOT NULL,delivered_at TEXT,recurrence TEXT NOT NULL DEFAULT 'none',status TEXT NOT NULL DEFAULT 'scheduled',occurrence_at TEXT,acknowledged_at TEXT,voice_note_uri TEXT NOT NULL DEFAULT '');
@@ -41,12 +44,14 @@ class SQLiteStore:
             CREATE TABLE IF NOT EXISTS alert_deliveries(id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,reason TEXT NOT NULL,risk TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,provider_id TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS health_events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,value TEXT NOT NULL,created_at TEXT NOT NULL);
             """)
+            # These additive migrations let early prototype databases keep working.
             cols = {r[1] for r in db.execute("PRAGMA table_info(reminders)")}
             for name, definition in {"recurrence":"TEXT NOT NULL DEFAULT 'none'","status":"TEXT NOT NULL DEFAULT 'scheduled'","occurrence_at":"TEXT","acknowledged_at":"TEXT","voice_note_uri":"TEXT NOT NULL DEFAULT ''"}.items():
                 if name not in cols: db.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
             db.execute("UPDATE reminders SET status='delivered' WHERE delivered_at IS NOT NULL AND status='scheduled'")
 
     def _reminder(self, r):
+        """Turn one database row into a decrypted domain object."""
         return Reminder(r["id"],self.secrets.decrypt(r["message"]),datetime.fromisoformat(r["due_at"]),r["recurrence"],ReminderStatus(r["status"]),datetime.fromisoformat(r["occurrence_at"]) if r["occurrence_at"] else None,r["voice_note_uri"])
     def add_reminder(self, x: Reminder) -> None:
         with self._database() as db: db.execute("INSERT INTO reminders(id,message,due_at,recurrence,status,voice_note_uri) VALUES(?,?,?,?,?,?)",(x.reminder_id,self.secrets.encrypt(x.message),x.due_at.astimezone(UTC).isoformat(),x.recurrence,x.status.value,x.voice_note_uri))
@@ -87,12 +92,16 @@ class SQLiteStore:
         with self._database() as db: rows=list(db.execute("SELECT id,role,content,created_at FROM conversation ORDER BY id DESC LIMIT ?",(limit,)))
         return [ConversationTurn(r["role"],self.secrets.decrypt(r["content"]),datetime.fromisoformat(r["created_at"]),r["id"]) for r in reversed(rows)]
     def conversation_pairs(self,limit=10):
+        # Pair each assistant turn with the closest preceding user turn so the
+        # caregiver reviews exactly the exchange that produced the response.
         with self._database() as db:
             rows=list(db.execute("""SELECT a.id assistant_turn_id,u.content prompt,a.content response,a.created_at,
                 f.rating FROM conversation a JOIN conversation u ON u.id=(SELECT MAX(id) FROM conversation WHERE id<a.id AND role='user')
                 LEFT JOIN response_feedback f ON f.assistant_turn_id=a.id WHERE a.role='assistant' ORDER BY a.id DESC LIMIT ?""",(limit,)))
         return [{"assistant_turn_id":r["assistant_turn_id"],"prompt":self.secrets.decrypt(r["prompt"]),"response":self.secrets.decrypt(r["response"]),"created_at":datetime.fromisoformat(r["created_at"]),"rating":r["rating"] or ""} for r in rows]
     def save_feedback(self,feedback,memory=""):
+        # Prompt and response are read from the database instead of trusting
+        # browser-submitted copies, which could have been modified by a client.
         if feedback.rating not in {"helpful","confusing","unsafe"}:raise ValueError("Invalid feedback rating")
         with self._database() as db:
             row=db.execute("""SELECT a.role,a.content response,(SELECT content FROM conversation WHERE id<a.id AND role='user' ORDER BY id DESC LIMIT 1) prompt

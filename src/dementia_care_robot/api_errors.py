@@ -1,3 +1,5 @@
+"""Translate low-level provider failures into messages useful to operators."""
+
 import json
 from urllib.error import HTTPError, URLError
 

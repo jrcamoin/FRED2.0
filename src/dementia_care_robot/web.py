@@ -1,3 +1,5 @@
+"""Dependency-free resident and caregiver web interfaces for the local device."""
+
 import base64, html, json, mimetypes, os, shutil, socket, ssl, subprocess, threading, uuid, webbrowser
 from datetime import UTC, datetime
 from email.parser import BytesParser
@@ -21,6 +23,10 @@ from .speech import OpenAITranscriber, SpeechNotConfigured
 from .storage import SQLiteStore
 
 CSS="""*{box-sizing:border-box}body{margin:0;background:#f1f5f7;color:#193247;font:17px/1.5 system-ui,sans-serif}header{background:#16344d;color:white;padding:18px 5vw;display:flex;justify-content:space-between;align-items:center}header a{color:white}main{max-width:1100px;margin:24px auto;padding:0 18px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}.card{background:white;border:1px solid #d8e2e7;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 4px 18px #16344d0d}h1,h2,h3{margin-top:0}button,.button{border:0;border-radius:12px;background:#14766e;color:white;font-weight:750;padding:13px 18px;min-height:48px;cursor:pointer;text-decoration:none;display:inline-block}button.danger{background:#a3342c}input,select,textarea{width:100%;padding:11px;border:1px solid #aebec8;border-radius:9px;font:inherit;margin:5px 0 12px}label{font-weight:700}.muted{color:#607484;font-size:.88rem}.notice{background:#fff3ca;border-left:5px solid #dfaa2b;padding:12px;margin-bottom:18px}.status{display:inline-block;border-radius:99px;background:#e6f4f1;padding:4px 10px}.reminder{border-top:1px solid #dce5e9;padding:14px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.gallery img{width:100%;height:150px;object-fit:cover;border-radius:10px}.chat{height:300px;overflow:auto;background:#f7fafb;padding:12px;border-radius:12px}.turn{margin:8px;padding:10px;background:#e7f1f6;border-radius:10px}.turn.user{background:#173a56;color:white;margin-left:20%}.talk{font-size:1.15rem;width:100%;background:#bd443b}.actions{display:flex;gap:10px;flex-wrap:wrap}.metric{font-size:2rem;font-weight:800}.steps{display:flex;gap:8px;margin-bottom:18px}.steps span{background:#e4ecef;padding:6px 11px;border-radius:99px}.steps .active{background:#14766e;color:white}@media(max-width:760px){.grid{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start;gap:10px}.actions{flex-direction:column}}"""
+
+# Temporary prototype setting. Change to True to restore the preserved
+# caregiver onboarding, login, session cookie, and POST-route protection.
+CAREGIVER_AUTH_ENABLED = False
 
 def _layout(title, body, caregiver=False):
     link='<a href="/">Resident screen</a>' if caregiver else '<a href="/caregiver">Caregiver</a>'
@@ -71,6 +77,7 @@ class RobotApplication:
         return {"power":power,"network":"online" if network else "offline","pico":pico_status,"disk_free_gb":round(disk.free/1024**3,1),"uptime":str(datetime.now(UTC)-self.started_at).split('.')[0],"last_check_in":self.store.last_health("check_in")}
 
 def _page(app,notice=""):
+    """Render the resident-facing conversation, reminder, and photo screen."""
     media=app.store.list_media(); turns=app.store.conversation(); all_r=app.store.list_reminders(True); delivered=[r for r in all_r if r.status==ReminderStatus.DELIVERED]
     current=delivered[-1] if delivered else None
     reminder=(f'<div class="card"><h2>{html.escape(current.message)}</h2>{f"<audio controls autoplay src=\"{html.escape(current.voice_note_uri)}\"></audio>" if current.voice_note_uri else ""}<div class="actions"><form method="post" action="/reminder/{current.reminder_id}/ack"><button>I’ve done this</button></form><form method="post" action="/reminder/{current.reminder_id}/help"><button class="danger">I need help</button></form></div></div>' if current else '')
@@ -90,6 +97,7 @@ def _onboarding(step=1,notice=""):
     return _layout("Set up FRED",f'<div class="steps"><span class="{"active" if step==1 else ""}">1 Security</span><span class="{"active" if step==2 else ""}">2 Schedule</span><span class="{"active" if step==3 else ""}">3 Contact</span></div>{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}<section class=card>{bodies[step]}</section>',True)
 
 def _caregiver(app,notice=""):
+    """Render caregiver controls for reminders, media, alerts, and feedback."""
     summary=app.store.daily_summary(); health=app.health(); reminders=app.store.list_reminders(True); deliveries=app.store.deliveries(); contacts=app.store.contacts()
     rs=''.join(f'<div class=reminder><b>{html.escape(r.message)}</b><br><span class=status>{r.status.value}</span> · {r.due_at.astimezone().strftime("%b %d, %I:%M %p")} · {r.recurrence}</div>' for r in reminders) or '<p>No reminders yet.</p>'
     ds=''.join(f'<div class=reminder><b>{d.risk.value.upper()}</b> {html.escape(d.reason)}<br>{d.status}, {d.attempts} attempt(s)</div>' for d in deliveries) or '<p>No alerts today.</p>'
@@ -103,12 +111,15 @@ def _caregiver(app,notice=""):
     return _layout("Caregiver dashboard",body,True)
 
 def _multipart(handler,length):
+    """Parse the limited multipart form format used for local media uploads."""
     raw=b"Content-Type: "+handler.headers["Content-Type"].encode()+b"\r\nMIME-Version: 1.0\r\n\r\n"+handler.rfile.read(length); msg=BytesParser(policy=default).parsebytes(raw); result={}
     for part in msg.iter_parts():
         name=part.get_param("name",header="content-disposition"); filename=part.get_filename(); data=part.get_payload(decode=True)
         result[name]=(filename,part.get_content_type(),data) if filename else data.decode(errors="replace")
     return result
 
+# Bind an application instance to a standard-library HTTP handler class. The
+# unusual one-space indentation below keeps the existing compact handler intact.
 def make_handler(app):
  class Handler(BaseHTTPRequestHandler):
     def auth(self):
@@ -123,11 +134,13 @@ def make_handler(app):
         if length>limit:raise ValueError("Request too large")
         return {k:v[0] for k,v in parse_qs(self.rfile.read(length).decode()).items()}
     def do_GET(self):
+        # GET routes render the two interfaces and decrypt uploaded media only
+        # when it is requested; encrypted bytes remain on disk at rest.
         p=urlparse(self.path); notice=parse_qs(p.query).get("notice",[""])[0]
         if p.path=="/":app.scheduler.deliver_due();self.send(_page(app,notice));return
         if p.path=="/caregiver":
-            if not app.store.configured():self.send(_onboarding());return
-            self.send(_caregiver(app,notice) if self.auth() else _login(notice));return
+            if CAREGIVER_AUTH_ENABLED and not app.store.configured():self.send(_onboarding());return
+            self.send(_caregiver(app,notice) if not CAREGIVER_AUTH_ENABLED or self.auth() else _login(notice));return
         if p.path.startswith("/local-media/"):
             path=app.media_dir/(Path(p.path).name+".enc")
             if path.is_file():
@@ -136,6 +149,9 @@ def make_handler(app):
                 return
         self.send_error(404)
     def do_POST(self):
+        # Public resident actions are handled before the caregiver auth gate.
+        # Caregiver mutations below the gate are temporarily open while
+        # CAREGIVER_AUTH_ENABLED is False during local prototyping.
         p=urlparse(self.path).path; length=int(self.headers.get("Content-Length","0"))
         if p=="/api/delivery-status":
             supplied=parse_qs(urlparse(self.path).query).get("token",[""])[0]
@@ -181,7 +197,7 @@ def make_handler(app):
             f=self.form(); stored=app.store.setting("caregiver_password_hash")
             if not DeviceSecrets.verify_password(f.get("password",""),stored):self.send(_login("Incorrect password."),401);return
             self.send_response(303);self.send_header("Location","/caregiver");self.send_header("Set-Cookie",f"fred_session={app.secrets.issue_session()}; HttpOnly; SameSite=Strict; Path=/");self.end_headers();return
-        if not self.auth():self.send(_login("Please sign in."),401);return
+        if CAREGIVER_AUTH_ENABLED and not self.auth():self.send(_login("Please sign in."),401);return
         try:
             if p=="/reminders":
                 f=self.form(); local=datetime.fromisoformat(f["due_at"]).astimezone(); rec=f.get("recurrence","none")
@@ -213,6 +229,7 @@ def make_handler(app):
  return Handler
 
 def serve(data_dir="data",host="127.0.0.1",port=8080,open_browser=False,certfile=None,keyfile=None,pico_device=None):
+    """Start FRED's HTTP server and the background reminder-delivery loop."""
     app=RobotApplication(Path(data_dir),pico_device);server=ThreadingHTTPServer((host,port),make_handler(app))
     if certfile and keyfile:ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(certfile,keyfile);server.socket=ctx.wrap_socket(server.socket,server_side=True)
     stop=threading.Event()

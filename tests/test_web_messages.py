@@ -11,6 +11,28 @@ from dementia_care_robot.models import CareProfile
 
 
 class MessageTests(unittest.TestCase):
+    def test_caregiver_dashboard_is_available_without_login(self):
+        class Socket:
+            def __init__(self):
+                self.input = BytesIO(b'GET /caregiver HTTP/1.1\r\nHost: localhost\r\n\r\n')
+                self.output = b''
+
+            def makefile(self, *args):
+                return self.input
+
+            def sendall(self, data):
+                self.output += data
+
+        with tempfile.TemporaryDirectory() as directory:
+            handler = make_handler(RobotApplication(Path(directory)))
+            sock = Socket()
+            handler(sock, ('127.0.0.1', 1234), None)
+
+        self.assertIn(b'200 OK', sock.output)
+        self.assertIn(b'Add reminder', sock.output)
+        self.assertIn(b'Upload family media', sock.output)
+        self.assertNotIn(b'Caregiver sign in', sock.output)
+
     def test_offline_json_conversation_and_invalid_input(self):
         class Socket:
             def __init__(self, payload):

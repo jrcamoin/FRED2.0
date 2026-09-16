@@ -1,3 +1,5 @@
+"""Send browser-recorded audio to an OpenAI-compatible transcription API."""
+
 import json
 import os
 import secrets
@@ -19,6 +21,7 @@ class OpenAITranscriber:
 
     @classmethod
     def from_environment(cls) -> "OpenAITranscriber | None":
+        """Build a transcriber only when remote speech processing is enabled."""
         if offline_mode() or local_ai_mode():
             return None
         key = os.environ.get("ROBOT_LLM_API_KEY")
