@@ -116,7 +116,49 @@ the browser does not speak a second copy. Replies appear after playback finishes
 Playback failures still return the reply text and show an audio error in the UI.
 The server account needs permission to use the audio device (the supplied service
 already includes the `audio` group). This setting does not add offline microphone
-recognition or change scheduled reminder speech.
+recognition or change scheduled reminder speech. Enable local recognition below.
+
+### Fully offline microphone and speaker on the Pi
+
+Run these commands from `FRED2.0` on the Pi. Installation and the model download
+need internet once; recognition and speech then work offline.
+
+```bash
+sudo apt install ffmpeg espeak-ng alsa-utils unzip
+# Activate your existing environment, or create one first:
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+python -m pip install -e ".[offline-voice]"
+mkdir -p models
+curl -fL https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o /tmp/fred-vosk-model.zip
+unzip -n /tmp/fred-vosk-model.zip -d models
+```
+
+Add these settings to `.env` (not `.env.example`):
+
+```dotenv
+ROBOT_VOSK_MODEL=models/vosk-model-small-en-us-0.15
+ROBOT_PI_SPEECH=true
+ROBOT_AUDIO_DEVICE=plughw:CARD=Headphones,DEV=0
+```
+
+Restart the server with `dementia-care-robot web --offline`. Open
+`http://127.0.0.1:8080` in Chromium on the Pi display, allow microphone access,
+and choose the USB PnP microphone in the browser/desktop input settings.
+Click **Start speaking**, speak, then click **Stop speaking**. Recordings stop
+automatically after 60 seconds. The browser sends the clip to the Pi; ffmpeg
+decodes it and Vosk transcribes locally, then FRED plays the reply using espeak-ng.
+No browser speech-recognition service or OpenAI API is used in this configuration.
+The offline companion still uses built-in replies rather than a language model.
+
+`ROBOT_VOSK_MODEL` takes priority over remote transcription in every mode. A bad
+model path or missing dependency produces a startup error rather than silently
+switching to a remote service. For systemd, use an absolute model path accessible
+to the `fred` account. Audio clips are processed in memory, while conversation
+transcripts follow the existing history storage behavior.
+
+The [Vosk model catalog](https://alphacephei.com/vosk/models) identifies this small
+English model as suitable for Raspberry Pi. Other languages need their own model.
 
 For visual testing on the same computer, `dementia-care-robot web --open` is sufficient. To serve the interface to a tablet on the same trusted Wi-Fi network:
 

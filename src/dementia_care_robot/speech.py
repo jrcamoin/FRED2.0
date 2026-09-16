@@ -3,6 +3,10 @@
 import json
 import os
 import secrets
+import shutil
+import subprocess
+import threading
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 from .api_errors import explain_api_error
@@ -11,6 +15,58 @@ from .config import local_ai_mode, offline_mode
 
 class SpeechNotConfigured(RuntimeError):
     pass
+
+
+class LocalTranscriber:
+    """Decode browser clips and recognize speech locally, without API calls."""
+
+    def __init__(self, model_path):
+        if not Path(model_path).is_dir():
+            raise SpeechNotConfigured("ROBOT_VOSK_MODEL must point to an extracted Vosk model directory. See README offline voice setup.")
+        self.ffmpeg = shutil.which("ffmpeg")
+        if not self.ffmpeg:
+            raise SpeechNotConfigured("Offline microphone transcription requires ffmpeg: sudo apt install ffmpeg")
+        try:
+            from vosk import Model, KaldiRecognizer
+        except ImportError as error:
+            raise SpeechNotConfigured('Install offline voice support: python -m pip install -e ".[offline-voice]"') from error
+        try:
+            self.model = Model(str(model_path))
+        except Exception as error:
+            raise SpeechNotConfigured("Unable to load ROBOT_VOSK_MODEL. Check that the model is fully extracted.") from error
+        self.recognizer = KaldiRecognizer
+        self.lock = threading.Lock()
+
+    def transcribe(self, audio, content_type="audio/webm"):
+        if not audio:
+            raise ValueError("No audio was recorded")
+        with self.lock:
+            try:
+                pcm = subprocess.run(
+                    [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
+                     "-protocol_whitelist", "pipe", "-i", "pipe:0", "-t", "60",
+                     "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"],
+                    input=audio, capture_output=True, check=True, timeout=45,
+                ).stdout
+            except (OSError, subprocess.SubprocessError) as error:
+                raise ValueError("Could not decode the microphone recording. Try recording again.") from error
+            recognizer = self.recognizer(self.model, 16000)
+            parts = []
+            for offset in range(0, len(pcm), 8000):
+                if recognizer.AcceptWaveform(pcm[offset:offset + 8000]):
+                    parts.append(json.loads(recognizer.Result()).get("text", ""))
+            parts.append(json.loads(recognizer.FinalResult()).get("text", ""))
+            text = " ".join(part.strip() for part in parts if part.strip())
+            if not text:
+                raise ValueError("No speech was detected. Check the selected microphone and try again.")
+            return text
+
+
+def configured_transcriber():
+    model_path = os.environ.get("ROBOT_VOSK_MODEL", "").strip()
+    if model_path:
+        return LocalTranscriber(Path(model_path).expanduser())
+    return OpenAITranscriber.from_environment()
 
 
 class OpenAITranscriber:
