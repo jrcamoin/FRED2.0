@@ -21,6 +21,7 @@ from .scheduler import ReminderScheduler
 from .security import DeviceSecrets
 from .speech import OpenAITranscriber, SpeechNotConfigured
 from .storage import SQLiteStore
+from .website import landing_page
 
 CSS="""*{box-sizing:border-box}body{margin:0;background:#f1f5f7;color:#193247;font:17px/1.5 system-ui,sans-serif}header{background:#16344d;color:white;padding:18px 5vw;display:flex;justify-content:space-between;align-items:center}header a{color:white}main{max-width:1100px;margin:24px auto;padding:0 18px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}.card{background:white;border:1px solid #d8e2e7;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 4px 18px #16344d0d}h1,h2,h3{margin-top:0}button,.button{border:0;border-radius:12px;background:#14766e;color:white;font-weight:750;padding:13px 18px;min-height:48px;cursor:pointer;text-decoration:none;display:inline-block}button.danger{background:#a3342c}input,select,textarea{width:100%;padding:11px;border:1px solid #aebec8;border-radius:9px;font:inherit;margin:5px 0 12px}label{font-weight:700}.muted{color:#607484;font-size:.88rem}.notice{background:#fff3ca;border-left:5px solid #dfaa2b;padding:12px;margin-bottom:18px}.status{display:inline-block;border-radius:99px;background:#e6f4f1;padding:4px 10px}.reminder{border-top:1px solid #dce5e9;padding:14px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.gallery img{width:100%;height:150px;object-fit:cover;border-radius:10px}.chat{height:300px;overflow:auto;background:#f7fafb;padding:12px;border-radius:12px}.turn{margin:8px;padding:10px;background:#e7f1f6;border-radius:10px}.turn.user{background:#173a56;color:white;margin-left:20%}.talk{font-size:1.15rem;width:100%;background:#bd443b}.actions{display:flex;gap:10px;flex-wrap:wrap}.metric{font-size:2rem;font-weight:800}.steps{display:flex;gap:8px;margin-bottom:18px}.steps span{background:#e4ecef;padding:6px 11px;border-radius:99px}.steps .active{background:#14766e;color:white}@media(max-width:760px){.grid{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start;gap:10px}.actions{flex-direction:column}}"""
 
@@ -29,7 +30,8 @@ CSS="""*{box-sizing:border-box}body{margin:0;background:#f1f5f7;color:#193247;fo
 CAREGIVER_AUTH_ENABLED = False
 
 def _layout(title, body, caregiver=False):
-    link='<a href="/">Resident screen</a>' if caregiver else '<a href="/caregiver">Caregiver</a>'
+    link='<a href="/app">Resident screen</a>' if caregiver else '<a href="/caregiver">Caregiver</a>'
+    link='<nav class="actions" aria-label="App navigation"><a href="/">Human Frame Robotics</a>'+link+'</nav>'
     return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><style>{CSS}</style></head><body><header><b>FRED Care Companion</b>{link}</header><main>{body}</main></body></html>'.encode()
 
 class RobotApplication:
@@ -83,7 +85,7 @@ def _page(app,notice=""):
     reminder=(f'<div class="card"><h2>{html.escape(current.message)}</h2>{f"<audio controls autoplay src=\"{html.escape(current.voice_note_uri)}\"></audio>" if current.voice_note_uri else ""}<div class="actions"><form method="post" action="/reminder/{current.reminder_id}/ack"><button>I’ve done this</button></form><form method="post" action="/reminder/{current.reminder_id}/help"><button class="danger">I need help</button></form></div></div>' if current else '')
     gallery=''.join(f'<figure><img src="{html.escape(m.uri)}" alt="{html.escape(m.description or m.title)}"><figcaption>{html.escape(m.title)}</figcaption></figure>' for m in media) or '<p class="muted">Your caregiver can add familiar photos.</p>'
     chat=''.join(f'<div class="turn {t.role}"><b>{"You" if t.role=="user" else "FRED"}</b><br>{html.escape(t.content)}</div>' for t in turns)
-    body=f'{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}{reminder}<div class="grid"><section class="card"><h1>Hello. I’m FRED, your robot helper.</h1><button class="talk" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" class="muted">{"Voice is handled by this browser. No OpenAI transcription charges." if not app.server_transcription else "You can also type below."}</p><div class="chat" id="chat">{chat}</div><form id="messageForm"><input id="messageInput" required maxlength="2000" placeholder="Ask FRED something"><button>Send</button></form></section><aside><section class="card"><h2>Familiar photos</h2><div class="gallery">{gallery}</div></section><section class="card"><h2>Need a person?</h2><p>Press the physical HELP button on FRED.</p></section></aside></div><script>{_resident_js()}</script>'
+    body=f'{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}{reminder}<div class="grid"><section class="card"><h1>Hello. I’m FRED, your robot helper.</h1><button class="talk" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" class="muted">{"Voice is handled by this browser. No OpenAI transcription charges." if not app.server_transcription else "You can also type below."}</p><div class="chat" id="chat">{chat}</div><form id="messageForm"><input id="messageInput" required maxlength="2000" placeholder="Ask FRED something"><button>Send</button></form><form method="post" action="/conversation/clear" onsubmit="return confirm(\'Clear this conversation from FRED?\')"><button class="danger">Clear conversation</button></form></section><aside><section class="card"><h2>Familiar photos</h2><div class="gallery">{gallery}</div></section><section class="card"><h2>Need a person?</h2><p>Press the physical HELP button on FRED.</p></section></aside></div><script>{_resident_js()}</script>'
     return _layout("FRED",body)
 
 def _resident_js():
@@ -137,7 +139,8 @@ def make_handler(app):
         # GET routes render the two interfaces and decrypt uploaded media only
         # when it is requested; encrypted bytes remain on disk at rest.
         p=urlparse(self.path); notice=parse_qs(p.query).get("notice",[""])[0]
-        if p.path=="/":app.scheduler.deliver_due();self.send(_page(app,notice));return
+        if p.path=="/":self.send(landing_page());return
+        if p.path in {"/app", "/app/"}:app.scheduler.deliver_due();self.send(_page(app,notice));return
         if p.path=="/caregiver":
             if CAREGIVER_AUTH_ENABLED and not app.store.configured():self.send(_onboarding());return
             self.send(_caregiver(app,notice) if not CAREGIVER_AUTH_ENABLED or self.auth() else _login(notice));return
@@ -180,10 +183,12 @@ def make_handler(app):
                 data=json.loads(self.rfile.read(length)); audio=base64.b64decode(data["audio"],validate=True); transcript,reply,risk=app.voice_turn(audio,str(data.get("content_type","audio/webm"))); app.store.record_health("check_in","voice");self.json({"transcript":transcript,"reply":reply,"risk":risk});return
             except SpeechNotConfigured as e:self.json({"error":str(e)},503);return
             except Exception as e:self.json({"error":str(e)},400);return
+        if p=="/conversation/clear":
+            app.store.clear_conversation();app.set_status("idle");self.redirect("/app","Conversation cleared.");return
         if p.startswith("/reminder/"):
             parts=p.split("/"); status=ReminderStatus.ACKNOWLEDGED if parts[-1]=="ack" else ReminderStatus.NEEDS_HELP; ok=app.store.acknowledge_reminder(parts[-2],status,datetime.now(UTC))
             if status==ReminderStatus.NEEDS_HELP:app.notifier.notify(Assessment(RiskLevel.CAREGIVER,"Help requested for a reminder.","I have recorded that you need help."))
-            app.store.record_health("check_in",status.value);app.set_status("idle");self.redirect("/","Thank you. Your response was recorded." if ok else "Reminder not found.");return
+            app.store.record_health("check_in",status.value);app.set_status("idle");self.redirect("/app","Thank you. Your response was recorded." if ok else "Reminder not found.");return
         if p=="/onboarding":
             try:
                 f=self.form();step=int(f["step"])

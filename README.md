@@ -24,6 +24,13 @@ For SMS alerts, configure the three required `ROBOT_TWILIO_*` settings shown in 
 
 ## Quick start
 
+The Human Frame Robotics website opens at `http://localhost:8080/`.
+Choose **Open your robot** to enter FRED at `/app`; caregiver tools remain at
+`/caregiver`. Customer login is not implemented yet: preview access goes
+directly into this server's robot app. Future customer accounts will need
+purchase verification and a mapping from each customer to their own device;
+the existing caregiver password is not a customer account system.
+
 Python 3.11+ is required. The only runtime package is `cryptography`.
 
 ```bash

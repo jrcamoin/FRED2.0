@@ -118,7 +118,10 @@ class SQLiteStore:
     def delete_memory(self,memory_id):
         with self._database() as db:return db.execute("DELETE FROM approved_memories WHERE id=?",(memory_id,)).rowcount>0
     def clear_conversation(self):
-        with self._database() as db: db.execute("DELETE FROM conversation")
+        # Feedback contains copies of the reviewed prompt and response, so it
+        # must be removed too for "clear conversation" to erase the transcript.
+        # Separately approved memories remain available until explicitly removed.
+        with self._database() as db: db.executescript("DELETE FROM response_feedback;DELETE FROM conversation;")
     def save_care_profile(self,p):
         vals=[self.secrets.encrypt(v) for v in (p.preferred_name,p.important_people,p.interests,p.daily_routine,p.comforts,p.usual_item_locations)]
         with self._database() as db: db.execute("INSERT OR REPLACE INTO care_profile VALUES(1,?,?,?,?,?,?)",vals)

@@ -7,10 +7,46 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dementia_care_robot.web import RobotApplication, make_handler
-from dementia_care_robot.models import CareProfile
+from dementia_care_robot.models import CareProfile, ConversationTurn
+from datetime import UTC, datetime
 
 
 class MessageTests(unittest.TestCase):
+    def test_resident_can_clear_conversation(self):
+        class Socket:
+            def __init__(self, request):
+                self.input = BytesIO(request)
+                self.output = b''
+
+            def makefile(self, *args):
+                return self.input
+
+            def sendall(self, data):
+                self.output += data
+
+        with tempfile.TemporaryDirectory() as directory:
+            app = RobotApplication(Path(directory))
+            app.store.append_turn(ConversationTurn('user', 'Private question', datetime.now(UTC)))
+            handler = make_handler(app)
+
+            website = Socket(b'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            handler(website, ('127.0.0.1', 1234), None)
+            self.assertIn(b'Human Frame Robotics', website.output)
+            self.assertIn(b'href="/app"', website.output)
+            self.assertNotIn(b'Private question', website.output)
+
+            page = Socket(b'GET /app HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            handler(page, ('127.0.0.1', 1234), None)
+            self.assertIn(b'Clear conversation', page.output)
+            self.assertIn(b'Private question', page.output)
+
+            clear = Socket(b'POST /conversation/clear HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n')
+            handler(clear, ('127.0.0.1', 1234), None)
+
+            self.assertIn(b'303 See Other', clear.output)
+            self.assertIn(b'Location: /app?', clear.output)
+            self.assertEqual(app.store.conversation(), [])
+
     def test_caregiver_dashboard_is_available_without_login(self):
         class Socket:
             def __init__(self):
