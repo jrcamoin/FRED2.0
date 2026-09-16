@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Register · HumanFrame Robotics{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-intro">
+    <span class="eyebrow">Local development account</span>
+    <h1>Start with a clean foundation.</h1>
+    <p>Your account is stored in the local SQLite database. No cloud identity provider is involved.</p>
+  </div>
+
+  <div class="card auth-card">
+    <span class="eyebrow">Registration</span>
+    <h2>Create your account</h2>
+
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" minlength="3" maxlength="80" pattern="[A-Za-z0-9_.-]+" autocomplete="username" required autofocus value="{{ request.form.get('username', '') }}">
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" maxlength="255" autocomplete="email" required value="{{ request.form.get('email', '') }}">
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+      <span class="field-hint">Use at least 8 characters.</span>
+
+      <button class="button button-primary button-wide" type="submit">Create account</button>
+    </form>
+
+    <p class="form-footer">Already registered? <a href="{{ url_for('auth.login') }}">Sign in</a></p>
+  </div>
+</section>
+{% endblock %}

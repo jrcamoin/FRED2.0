@@ -1,121 +1,118 @@
-# Dementia Care Robot
+# HumanFrame Robotics
 
-An early, safety-first software foundation for an assistive robot supporting people living with dementia and their caregivers.
+A clean development baseline for the HumanFrame Robotics platform. The project
+keeps web-platform concerns under `system/` and robot-specific domain code under
+`robot/` so authentication and Flask infrastructure do not leak into future
+simulation, behavior, or hardware work.
 
-This repository now provides a working, hardware-neutral Python prototype for:
+The `old/` directory is reference material only. The new application does not
+import or depend on it.
 
-- caregiver- or patient-scheduled reminders with SQLite persistence;
-- a familiar-photo display;
-- guarded, history-aware conversation with a local fallback or optional remote LLM;
-- simple wellbeing check-ins;
-- caregiver escalation based on explicit safety rules;
-- auditable interaction records with minimal personal data;
-- replaceable speech, sensor, and notification adapters.
+## Setup
 
-It is **not a medical device or emergency service**. It must not diagnose, recommend medication changes, restrain a person, impersonate a human, or replace professional care. Production use requires clinical, accessibility, privacy, security, and regulatory review.
-
-## Caregiver setup and Raspberry Pi deployment
-
-On first launch, open `/caregiver` and complete the three-step setup: create a caregiver password, choose quiet hours, and add an SMS or HTTPS push-webhook contact. The resident screen at `/` deliberately has no login; caregiver configuration and personal-data controls require an authenticated session.
-
-Personal profile text, conversations, contact destinations, reminder messages, photos, and voice notes are encrypted at rest using a device key stored at `data/.device-key` with owner-only permissions. Back up that key separately: encrypted data cannot be recovered without it. For production, also enable Raspberry Pi OS full-disk encryption, HTTPS, firewalling, automatic security updates, and physical protection of the SD card.
-
-For SMS alerts, configure the three required `ROBOT_TWILIO_*` settings shown in `.env.example`. Push contacts accept an HTTPS endpoint receiving `{title, message}` JSON. Provider acceptance, retries, and failures appear on the caregiver dashboard. To receive carrier delivery status, expose the callback over HTTPS and configure the optional callback URL and a long random callback token. Neither channel is an emergency service.
-
-## Quick start
-
-Python 3.11+ is required. The only runtime package is `cryptography`.
+Python 3.11 or newer is required.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
-dementia-care-robot demo
-dementia-care-robot web --open
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On Windows PowerShell, activate the environment with
+`.venv\Scripts\Activate.ps1` instead.
+
+## Run the application
+
+From the repository root:
+
+```bash
+python app.py
+```
+
+Open <http://127.0.0.1:5000>. Register a local account, then use the dashboard
+and Robot UI. The SQLite database is created automatically at
+`instance/humanframe.db`.
+
+For a non-default development secret or database, export environment variables
+before starting the app:
+
+```bash
+export SECRET_KEY="replace-with-a-long-random-value"
+export DATABASE_URL="sqlite:////absolute/path/to/humanframe.db"
+python app.py
+```
+
+Set `SESSION_COOKIE_SECURE=true` only when the site is served over HTTPS. The
+development defaults are convenient for local work, not production deployment.
+
+## Run the tests
+
+```bash
 python -m unittest discover -s tests -v
 ```
 
-Open `http://127.0.0.1:8080` if the browser does not open automatically. The dashboard lets you schedule reminders, add familiar images by URL, create a caregiver-provided Care Profile, and talk or type to FRED. Profile details such as routines, comforting interests, and usual item locations are used when relevant so FRED can give more familiar, practical answers. Data is stored under `data/`, which is ignored by Git. The console acts as the current caregiver notification hardware.
+The suite covers imports, homepage redirects, registration, duplicate-user
+rejection, password hashing, valid and invalid login, authenticated pages,
+logout, route protection, Robot UI status, and the initial robot states.
 
-## Optional LLM conversation
-
-Without configuration, conversation uses a predictable local fallback so the model works offline. To enable generated chat and voice transcription, copy the example configuration once:
-
-```bash
-cp .env.example .env
-# Open .env and replace your-api-key-here with your actual API key.
-dementia-care-robot web
-```
-
-The local `.env` file is loaded automatically and ignored by Git. Values already exported in the shell take priority. The model and endpoint settings in `.env.example` are optional defaults.
-
-To test without making any paid API calls, keep the saved key and explicitly start in offline mode:
-
-```bash
-dementia-care-robot web --offline
-```
-
-For generated replies without API charges, run the installed Ollama service and use local AI mode:
-
-```bash
-ollama serve
-dementia-care-robot web --local-ai
-```
-
-Local AI mode defaults to `llama3.2:3b`. Override it with `ROBOT_LOCAL_MODEL` when another Ollama model is installed. Safety screening still happens locally before the model is called.
-
-In offline testing mode, the **Hold to speak** button uses the browser's built-in speech recognition and sends only the resulting text to the local companion. This makes no OpenAI API calls. Browser speech recognition availability and whether processing stays on-device depend on the browser and operating system.
-
-Press and hold **Hold to talk**, speak, and release. The browser sends that single clip to the local server, which transcribes it, safety-checks the text, generates a response, and returns it to the tablet. The tablet displays both sides and reads FRED's response aloud. There is no always-on recording.
-
-Conversation text and recorded clips are sent to the configured provider only when `ROBOT_LLM_API_KEY` is present. Audio is not saved locally, but the transcript is retained in the local conversation history until **Clear private conversation** is pressed. Explicit danger or distress is screened before the conversation model call; urgent messages use a fixed safety response. API failures are reported rather than disguised as generated replies. For a real deployment, replace the `.env` key with a device secret store and obtain explicit consent before sending data remotely.
-
-## Display on a tablet
-
-For visual testing on the same computer, `dementia-care-robot web --open` is sufficient. To serve the interface to a tablet on the same trusted Wi-Fi network:
-
-```bash
-dementia-care-robot web --host 0.0.0.0 --port 8443 \
-  --certfile /path/to/trusted-certificate.pem \
-  --keyfile /path/to/private-key.pem
-```
-
-Then open `https://DEVICE_IP:8443` on the tablet and allow microphone access. Modern browsers require a secure HTTPS context for microphone capture from another device. The certificate must be trusted by the tablet. This prototype does not authenticate users, so do not expose the server to the public internet or an untrusted network.
-
-## Architecture
+## Project structure
 
 ```text
-browser / speech / buttons / sensors
-          |
-          v
- web app / scheduler ----> SQLiteStore
-          |                    |
-          v                    v
- CareCoordinator ------> SafetyPolicy
-     |       |                 |
-     v       v                 v
- Speaker  CaregiverNotifier  LLM adapter
+.
+├── app.py                    # python app.py entry point
+├── requirements.txt
+├── pyproject.toml
+├── system/                   # Flask platform and user-facing system UI
+│   ├── app.py                # application factory
+│   ├── config.py
+│   ├── extensions.py
+│   ├── auth/                 # user model, auth services, routes
+│   ├── routes/               # authenticated application pages
+│   ├── templates/            # shared layout and page templates
+│   └── static/css/           # shared visual design
+├── robot/                    # robot domain, independent of Flask
+│   ├── robot.py              # minimal Robot coordinator shell
+│   ├── state.py              # RobotState enum
+│   ├── simulation/           # future simulated device adapters
+│   ├── hardware/             # future physical device adapters
+│   └── behaviors/            # future high-level behaviors
+├── tests/
+└── old/                      # untouched reference implementation
 ```
 
-The domain layer contains care behavior, while protocol interfaces in `ports.py` isolate vendor-specific hardware. A Raspberry Pi or robot controller can implement `Speaker`, `MediaDisplay`, and `CaregiverNotifier`; buttons and sensors can call the same coordinator and scheduler methods used by the web interface.
+## What works now
 
-For the Raspberry Pi 2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Start the Pico bridge with `--pico /dev/ttyACM0`.
+- Flask application factory and blueprints
+- Local registration with duplicate username/email protection
+- Werkzeug password hashing
+- Flask-Login session authentication
+- CSRF protection for authentication and logout forms
+- Login with either username or email
+- Authenticated dashboard and Robot UI
+- Shared responsive navigation and page styling
+- SQLite persistence with no manual database setup
+- Importable `RobotState` enum and minimal `Robot.set_state(...)`
 
-## Current prototype limitations
+## What is simulated
 
-- Spoken conversation responses use the browser's installed voice. Configured SMS and push-webhook alerts still require end-to-end testing and are not an emergency service.
-- Photo URLs may disclose the viewer's IP to the image host. Local upload/copy support is the next privacy milestone.
-- The resident screen is intentionally unauthenticated. Caregiver pages require the password created during onboarding. Do not expose the server to a public or untrusted network.
-- Reminder times use the device's local timezone at entry.
-- Sensitive SQLite fields and uploaded media are encrypted, but metadata and database structure are visible. Do not treat this as a substitute for full-disk encryption.
+The Robot UI reports the initial `IDLE` robot state, a neutral face, simulated or
+disconnected microphone and speaker, and simulated motors. These are debug labels
+only; they do not pretend that device APIs exist.
 
-## Suggested next milestones
+## Not implemented yet
 
-1. Co-design conversation flows with people living with dementia and caregivers.
-2. Choose one narrow pilot use case, such as hydration reminders.
-3. Add explicit consent, identity, quiet-hours, recurring reminders, and caregiver-contact configuration.
-4. Add authenticated local media upload plus encrypted persistence, retention, and deletion controls.
-5. Implement GPIO adapters for a physical help button, speaker, and status light, with a fail-safe notification service.
-6. Add robot-speaker text-to-speech behind the existing port, then run accessibility, failure-mode, and supervised usability testing.
+- State transitions or a state-machine event loop
+- Simulated microphone, speaker, face/display, or motor objects
+- Physical hardware drivers, GPIO, PWM, serial, or audio pipelines
+- Behaviors, behavior trees, ROS, LLM, or remote service integrations
+- OAuth, JWT, roles/permissions, password reset, or production deployment
+- Database migrations or production secret management
 
-See [docs/SAFETY.md](docs/SAFETY.md) before connecting sensors, language models, health records, or physical actuators.
+## Where to build next
+
+Start in `robot/simulation/` by defining one small simulated device at a time.
+Introduce matching device interfaces before physical adapters, then evolve
+`Robot` from its current state holder into the coordinator for explicit state
+transitions. Connect state changes to the `/robot` page only after the robot
+domain can be tested without Flask.

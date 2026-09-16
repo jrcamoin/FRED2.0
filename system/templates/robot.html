@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Robot UI · HumanFrame Robotics{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <span class="eyebrow">Simulation / debugging</span>
+    <h1>Robot UI</h1>
+    <p>A read-only view of the robot foundation. Hardware connections are not active.</p>
+  </div>
+  <span class="environment-badge"><span class="dot dot-simulated"></span> Simulation mode</span>
+</section>
+
+<section class="robot-state-card card">
+  <div>
+    <span class="eyebrow">Robot state</span>
+    <div class="state-value">{{ robot.state.name }}</div>
+    <p>The robot is waiting for a future event or behavior.</p>
+  </div>
+  <div class="robot-orbit" aria-hidden="true">
+    <div class="robot-core">HF</div>
+  </div>
+</section>
+
+<section aria-labelledby="components-title">
+  <div class="section-heading">
+    <div>
+      <span class="eyebrow">Device overview</span>
+      <h2 id="components-title">Components</h2>
+    </div>
+    <span class="muted">Debug values only</span>
+  </div>
+
+  <div class="component-grid">
+    {% for name, status in components %}
+      <article class="card component-card">
+        <div class="component-icon" aria-hidden="true">{{ name[0] }}</div>
+        <div>
+          <h3>{{ name }}</h3>
+          <span class="component-status">{{ status }}</span>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card state-map">
+  <div>
+    <span class="eyebrow">State machine foundation</span>
+    <h2>Available states</h2>
+    <p>Transitions and device effects will be added in the next robot-focused iteration.</p>
+  </div>
+  <div class="state-list" aria-label="Available robot states">
+    {% for state in available_states %}
+      <span class="state-chip {{ 'current' if state == robot.state else '' }}">{{ state.name }}</span>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

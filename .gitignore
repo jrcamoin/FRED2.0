@@ -7,8 +7,5 @@ build/
 dist/
 .env
 data/
-__pycache__/
-*.py[cod]
-.venv/
-data/
+instance/
 *.db

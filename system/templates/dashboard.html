@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard · HumanFrame Robotics{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <span class="eyebrow">Development dashboard</span>
+    <h1>Welcome, {{ current_user.username }}</h1>
+    <p>The platform shell is ready. Robot behavior remains intentionally minimal.</p>
+  </div>
+  <a class="button button-primary" href="{{ url_for('main.robot_page') }}">Open Robot UI <span aria-hidden="true">→</span></a>
+</section>
+
+<section class="dashboard-grid">
+  <article class="card feature-card feature-card-accent">
+    <div class="icon-tile" aria-hidden="true">R</div>
+    <span class="status-pill status-ready">Ready</span>
+    <h2>Robot workspace</h2>
+    <p>Inspect the current state and simulated component status before the state machine is implemented.</p>
+    <a class="text-link" href="{{ url_for('main.robot_page') }}">View robot status →</a>
+  </article>
+
+  <article class="card feature-card">
+    <div class="icon-tile icon-tile-system" aria-hidden="true">S</div>
+    <span class="status-pill status-online">Online</span>
+    <h2>System platform</h2>
+    <p>Flask, local accounts, secure password hashing, sessions, and protected routes are active.</p>
+  </article>
+
+  <article class="card account-card">
+    <span class="eyebrow">Current user</span>
+    <dl class="detail-list">
+      <div>
+        <dt>Username</dt>
+        <dd>{{ current_user.username }}</dd>
+      </div>
+      <div>
+        <dt>Email</dt>
+        <dd>{{ current_user.email }}</dd>
+      </div>
+      <div>
+        <dt>Authentication</dt>
+        <dd><span class="dot dot-online"></span> Session active</dd>
+      </div>
+    </dl>
+  </article>
+</section>
+{% endblock %}

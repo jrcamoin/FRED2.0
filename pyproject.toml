@@ -3,16 +3,20 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dementia-care-robot"
+name = "humanframe-robotics"
 version = "0.1.0"
-description = "Safety-first, hardware-neutral foundation for an assistive dementia care robot"
+description = "Clean Flask and robot-domain foundation for HumanFrame Robotics"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["cryptography>=38"]
-
-[project.scripts]
-dementia-care-robot = "dementia_care_robot.cli:main"
+dependencies = [
+    "Flask>=3.1,<4",
+    "Flask-Login>=0.6,<1",
+    "Flask-SQLAlchemy>=3.1,<4",
+    "Flask-WTF>=1.2,<2",
+]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["robot*", "system*"]
+exclude = ["old*", "tests*"]
