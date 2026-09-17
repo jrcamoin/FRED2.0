@@ -1,0 +1,36 @@
+/* Product information and the early partner inquiry flow. */
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid #bb653f;outline-offset:5px}
+.contact :focus-visible,.site-header :focus-visible{outline-color:#fff}
+section[id]{scroll-margin-top:24px}
+.product h2,.faq h2{font-size:clamp(44px,5vw,75px);line-height:1.05;font-weight:600}
+.section-intro{max-width:620px;font:19px/1.65 Georgia,serif;color:#4e5752}
+.feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;margin-top:55px}
+.feature-grid article{border-top:1px solid var(--line);padding-top:28px}
+.feature-grid h3{font:500 25px/1.3 Manrope,sans-serif;margin-top:22px}
+.feature-grid p{font-size:15px;line-height:1.7;color:#4e5752}
+.faq{background:var(--paper)}
+.faq-list{max-width:850px;margin-top:50px}
+details{border-top:1px solid var(--line);padding:24px 0}
+details:last-child{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;font-size:18px;line-height:1.5;padding-right:10px}
+details p{max-width:720px;margin:18px 0 0;color:#4e5752;line-height:1.7}
+.contact{grid-template-columns:1fr 1fr;gap:7vw}
+.contact-copy{padding-top:0;min-width:0}
+form label{display:block;font-size:14px;margin:24px 0 10px}
+form select,form textarea{display:block;width:100%;background:var(--paper);border:1px solid #744130;border-radius:8px;padding:14px;color:var(--ink);line-height:1.5}
+form textarea{resize:vertical;min-height:120px}
+.form-note{font-size:13px;line-height:1.6;color:#fff;margin:16px 0 0}
+.form-note a{text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+form .button{margin-top:20px}
+#form-status{font-size:14px;line-height:1.6;margin-top:18px}
+#inquiry-result{border-top:1px solid #efd3c6;margin-top:30px}
+[hidden]{display:none!important}
+@media(max-width:800px){.feature-grid,.contact{grid-template-columns:1fr}.hero-note{display:flex;left:22px;right:22px;bottom:20px;font-size:10px}.hero-note p br{display:none}.hero-note span{display:none}.product h2,.faq h2{font-size:43px}.feature-grid{gap:25px}.contact{gap:40px}}
+/* Shared brand refinements and the path into FRED. */
+body{font-family:"DM Sans",system-ui,sans-serif}h1,h2,h3{overflow-wrap:break-word}.skip-link{position:fixed;top:12px;left:12px;z-index:100;background:#fff;color:#203b36;padding:14px 20px;border-radius:8px;transform:translateY(-150%)}.skip-link:focus{transform:none}.site-header nav a{opacity:1;padding:12px 0}.site-header nav{gap:24px}.nav-app{border-bottom:1px solid #ffffff80}.menu-button{min-width:44px;min-height:44px;align-items:center;justify-content:center}.button-primary{background:#a84b31;border-color:#a84b31}.pathway-strip{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:28px 8vw;border-bottom:1px solid var(--line)}.pathway-strip>span{font-size:10px;letter-spacing:.15em}.pathway-strip p{margin:0;font:18px Georgia,serif}.pathway-strip a{font-size:12px;text-decoration:underline;text-underline-offset:5px}.fred-feature{display:grid;grid-template-columns:1.1fr 1fr;gap:8vw;align-items:center;background:#e3e9df}.fred-feature h2{font-size:clamp(44px,5vw,75px);line-height:1.06}.fred-feature .section-label{margin-bottom:30px}.feature-actions{display:flex;gap:24px;align-items:center;flex-wrap:wrap}.dark-button{background:var(--green);color:#fff;border-color:var(--green)}.prototype-note{font-size:12px;color:#526354;margin:24px 0 0}.fred-preview{background:#f8f6f0;border:1px solid #c4cdbf;border-radius:160px 160px 24px 24px;padding:65px 32px 24px;text-align:center;display:block;box-shadow:0 25px 60px #263f3610}.preview-label{font-size:9px;letter-spacing:.15em;color:#536355}.robot-face{background:#263f36;max-width:250px;height:150px;border-radius:55px;margin:35px auto;display:flex;justify-content:center;align-items:center;gap:60px;box-shadow:inset 0 -8px 0 #172b24}.robot-face i{width:20px;height:40px;background:#edf2d9;border-radius:30px}.fred-preview h3{font:500 30px Manrope,system-ui,sans-serif;margin-bottom:12px}.fred-preview p{font-size:14px;color:#536355}.preview-bottom{display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:24px;margin-top:40px;font-size:12px}.contact{background:#a84b31}.phase,.section-label{color:#556058}footer small{color:#aab8af}.site-header .brand{min-width:155px}footer>div{flex-wrap:wrap}a:hover{text-underline-offset:5px}.feature-grid article{transition:transform .2s}.feature-grid article:hover{transform:translateY(-4px)}
+@media(min-width:1500px){.section{padding-left:max(8vw,calc((100vw - 1280px)/2));padding-right:max(8vw,calc((100vw - 1280px)/2))}}
+@media(max-width:1000px){.site-header nav{gap:14px}.site-header>.button{display:none}.pathway-strip{flex-wrap:wrap}.fred-feature{gap:40px}}
+@media(max-width:800px){.fred-feature{grid-template-columns:1fr}.pathway-strip{padding:25px 24px;gap:14px}.pathway-strip>span{display:none}.hero{min-height:740px}.hero-copy{top:46%}.hero h1{font-size:clamp(48px,11vw,76px);line-height:.98}.hero-intro{max-width:420px}.hero-note{bottom:22px}.fred-preview{max-width:460px;width:100%;margin:auto}.site-header.open nav{box-shadow:0 16px 24px #0003}.site-header.open nav a{padding:12px}.section{padding-top:72px;padding-bottom:72px}}
+@media(prefers-reduced-motion:reduce){.feature-grid article{transition:none}.feature-grid article:hover,.button:hover{transform:none}}

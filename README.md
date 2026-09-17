@@ -25,6 +25,12 @@ For SMS alerts, configure the three required `ROBOT_TWILIO_*` settings shown in 
 ## Quick start
 
 The Human Frame Robotics website opens at `http://localhost:8080/`.
+The saved `HumanFrameRoboticsWebsite` is integrated as the main brand site.
+The FRED product website is retained at `/fred`, linked from the main navigation
+and a dedicated feature section. Both sites link to the companion and caregiver
+spaces, with matching responsive styling. Public assets ship inside the Python
+package under `static/site`; no separate frontend server is needed.
+
 Choose **Open your robot** to enter FRED at `/app`; caregiver tools remain at
 `/caregiver`. Customer login is not implemented yet: preview access goes
 directly into this server's robot app. Future customer accounts will need

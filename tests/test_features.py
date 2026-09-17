@@ -110,7 +110,7 @@ class FeatureTests(unittest.TestCase):
             page = _page(app).decode()
         self.assertIn('data-server-transcription="false"', page)
         self.assertIn("window.SpeechRecognition||window.webkitSpeechRecognition", page)
-        self.assertIn("No OpenAI transcription charges", page)
+        self.assertIn("Press Start speaking, or type a message below.", page)
 
     def test_online_page_records_audio_for_server_transcription(self):
         with patch.dict("os.environ", {"ROBOT_LLM_API_KEY": "test-key"}, clear=True):
