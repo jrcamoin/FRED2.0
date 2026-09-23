@@ -112,6 +112,21 @@ class FeatureTests(unittest.TestCase):
         self.assertIn("window.SpeechRecognition||window.webkitSpeechRecognition", page)
         self.assertIn("Press Start speaking, or type a message below.", page)
 
+    def test_robot_state_drives_head_and_bounds_neck(self):
+        app = RobotApplication(Path(self.temp.name) / "dual-display")
+        app.set_status("speaking", "Hello there")
+        app.move_neck(999, -999)
+        self.assertEqual(app.robot_state()["state"], "speaking")
+        self.assertEqual(app.robot_state()["emotion"], "happy")
+        self.assertEqual(app.robot_state()["speech"], "Hello there")
+        self.assertEqual((app.robot_state()["pan"], app.robot_state()["tilt"]), (60.0, -25.0))
+
+    def test_pico_bridge_writes_bounded_neck_command(self):
+        stream = BytesIO()
+        bridge = PicoBridge("test", lambda *_: None, stream)
+        bridge.move_neck(100, -40, 500)
+        self.assertEqual(stream.getvalue(), b"NECK 60.0 -25.0 180\n")
+
     def test_online_page_records_audio_for_server_transcription(self):
         with patch.dict("os.environ", {"ROBOT_LLM_API_KEY": "test-key"}, clear=True):
             app = RobotApplication(Path(self.temp.name) / "online-data")

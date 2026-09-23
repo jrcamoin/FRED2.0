@@ -69,6 +69,24 @@ class MessageTests(unittest.TestCase):
         self.assertIn(b'Upload family media', sock.output)
         self.assertNotIn(b'Caregiver sign in', sock.output)
 
+    def test_head_display_and_shared_state_endpoints(self):
+        class Socket:
+            def __init__(self, request):
+                self.input, self.output = BytesIO(request), b''
+            def makefile(self, *args): return self.input
+            def sendall(self, data): self.output += data
+
+        with tempfile.TemporaryDirectory() as directory:
+            app = RobotApplication(Path(directory)); handler = make_handler(app)
+            head = Socket(b'GET /head HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            handler(head, ('127.0.0.1', 1234), None)
+            self.assertIn(b'FRED head', head.output)
+            self.assertIn(b'FaceDetector', head.output)
+            state = Socket(b'GET /api/robot-state HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            handler(state, ('127.0.0.1', 1234), None)
+            payload = json.loads(state.output.split(b'\r\n\r\n', 1)[1])
+            self.assertEqual(payload['state'], 'idle')
+
     def test_offline_json_conversation_and_invalid_input(self):
         class Socket:
             def __init__(self, payload):

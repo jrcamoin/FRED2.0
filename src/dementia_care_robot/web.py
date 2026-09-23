@@ -44,6 +44,7 @@ class RobotApplication:
         model=OpenAICompatibleModel.from_environment() or OfflineCompanion(); self.generated_responses=isinstance(model,OpenAICompatibleModel); self.response_mode="online" if self.generated_responses else "offline"
         self.conversation=ConversationService(self.store,model,self.notifier); self.transcriber=OpenAITranscriber.from_environment(); self.server_transcription=self.transcriber is not None
         self.started_at=datetime.now(UTC); self.pico=PicoBridge(pico_device,self._hardware_event) if pico_device else None
+        self._state_lock=threading.Lock(); self._state={"state":"idle","emotion":"calm","sequence":0,"speech":"","pan":0.0,"tilt":0.0}
         if self.pico:self.pico.start()
         self.store.record_health("boot","ok")
     def _hardware_event(self,switch,action):
@@ -51,13 +52,23 @@ class RobotApplication:
         if switch=="action" and action=="press":
             delivered=[r for r in self.store.list_reminders(True) if r.status==ReminderStatus.DELIVERED]
             if delivered:self.store.acknowledge_reminder(delivered[-1].reminder_id,ReminderStatus.ACKNOWLEDGED,datetime.now(UTC)); self.set_status("idle")
-    def set_status(self,state):
+    def set_status(self,state,speech=""):
+        emotions={"idle":"calm","listening":"attentive","thinking":"curious","speaking":"happy","alert":"concerned","off":"asleep"}
+        with self._state_lock:
+            self._state.update(state=state,emotion=emotions.get(state,"calm"),speech=speech)
+            self._state["sequence"]+=1
         if self.pico:self.pico.set_led(state)
+    def robot_state(self):
+        with self._state_lock:return dict(self._state)
+    def move_neck(self,pan,tilt,speed=90):
+        pan=max(-60.0,min(60.0,float(pan)));tilt=max(-25.0,min(25.0,float(tilt)))
+        with self._state_lock:self._state.update(pan=pan,tilt=tilt)
+        if self.pico:self.pico.move_neck(pan,tilt,speed)
     def voice_turn(self,audio,content_type):
         if not self.transcriber:raise SpeechNotConfigured("Voice transcription is unavailable. Please type while testing.")
         self.set_status("thinking")
         try:
-            transcript=self.transcriber.transcribe(audio,content_type); reply,risk=self.conversation.respond(transcript); self.set_status("alert" if risk is RiskLevel.URGENT else "speaking"); return transcript,reply,risk.value
+            transcript=self.transcriber.transcribe(audio,content_type); reply,risk=self.conversation.respond(transcript); self.set_status("alert" if risk is RiskLevel.URGENT else "speaking",reply); return transcript,reply,risk.value
         except Exception:self.set_status("idle");raise
     def health(self):
         disk=shutil.disk_usage(self.data_dir); network=False
@@ -88,7 +99,24 @@ def _page(app,notice=""):
     gallery=''.join(f'<figure><img src="{html.escape(m.uri)}" alt="{html.escape(m.description or m.title)}"><figcaption>{html.escape(m.title)}</figcaption></figure>' for m in media if m.kind=="image") or '<div class="empty-state"><span aria-hidden="true">♡</span><h3>A place for familiar faces</h3><p>Your caregiver can add photos of the people and moments you love.</p></div>'
     chat=''.join(f'<div class="turn {t.role}"><b>{"You" if t.role=="user" else "FRED"}</b><br>{html.escape(t.content)}</div>' for t in turns) or '<div class="chat-empty"><p>It’s good to spend time with you.</p><span>Tell me about your day, or ask me something.</span></div>'
     body=f'{f"<div class=notice>{html.escape(notice)}</div>" if notice else ""}{reminder}<div class="grid"><section class="card"><div class="companion-heading"><span class="fred-icon" aria-hidden="true">••</span><div><p class="eyebrow">A moment together</p><h1>Hello. I’m FRED,<br>your robot helper.</h1></div></div><button class="talk" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" class="muted" role="status">{"Press Start speaking, or type a message below." if not app.server_transcription else "You can also type below."}</p><div class="chat" id="chat" role="log" aria-label="Conversation with FRED" aria-live="polite">{chat}</div><form id="messageForm"><label class="sr-only" for="messageInput">Your message to FRED</label><input id="messageInput" required maxlength="2000" placeholder="Ask FRED something"><button>Send message →</button></form><form class="clear-form" method="post" action="/conversation/clear" onsubmit="return confirm(\'Clear this conversation from FRED?\')"><button class="danger">Clear conversation</button></form></section><aside><section class="card"><h2>Familiar photos</h2><div class="gallery">{gallery}</div></section><section class="card"><h2>Need a person?</h2><p>Press the physical HELP button on FRED.</p></section></aside></div><script>{_resident_js()}</script>'
+    body += '<script src="/static/site/wake-voice.js" defer></script><p><a href="/test">Camera and hands-free laptop test</a></p>'
     return _layout("FRED",body)
+
+def _head_page():
+    """Fullscreen expressive face for the head LCD; camera processing stays local."""
+    return b'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FRED head</title><style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102720;color:#eef8f3;font-family:system-ui,sans-serif}.face{width:100vw;height:100vh;display:grid;place-items:center;position:relative;background:radial-gradient(circle at 50% 42%,#31584b,#102720 68%)}.eyes{display:flex;gap:13vw;transform:translate(var(--gx,0),var(--gy,0));transition:transform .18s ease}.eye{width:min(25vw,220px);height:min(31vw,270px);border-radius:48%;background:#eaf8f1;position:relative;box-shadow:0 0 45px #91d5b655}.pupil{position:absolute;width:35%;height:42%;border-radius:50%;background:#17382d;left:32%;top:29%}.mouth{position:absolute;top:72%;width:18vw;height:3.5vh;border-radius:0 0 90px 90px;border-bottom:1.7vh solid #d8eee4;transition:.2s}.label{position:absolute;bottom:2vh;opacity:.55;font-size:clamp(12px,2vw,20px)}video{display:none}.face.listening .eye{transform:scaleY(1.08)}.face.thinking .eyes{transform:translate(var(--gx,0),var(--gy,0)) rotate(-4deg)}.face.speaking .mouth{animation:talk .32s infinite alternate;height:8vh}.face.alert{background:radial-gradient(circle at 50% 42%,#70473e,#241915 70%)}.face.alert .pupil{transform:scale(.78)}.face.idle .eye{animation:blink 6s infinite}.face.off .eye{transform:scaleY(.08)}@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.06)}}@keyframes talk{to{height:3vh;transform:scaleX(.7)}}
+</style></head><body><main id="face" class="face idle" aria-label="FRED is calm"><div class="eyes"><div class="eye"><i class="pupil"></i></div><div class="eye"><i class="pupil"></i></div></div><div class="mouth"></div><div id="label" class="label">FRED</div><video id="camera" autoplay muted playsinline></video></main><script>
+const face=document.getElementById('face'),label=document.getElementById('label'),video=document.getElementById('camera');let sequence=-1,lastNeck=0,detector;
+async function poll(){try{const r=await fetch('/api/robot-state',{cache:'no-store'}),s=await r.json();if(s.sequence!==sequence){sequence=s.sequence;face.className='face '+s.state;face.setAttribute('aria-label','FRED is '+s.emotion);label.textContent=s.emotion==='calm'?'FRED':s.emotion;}}catch(e){}finally{setTimeout(poll,250)}}
+async function neck(pan,tilt){if(Date.now()-lastNeck<350)return;lastNeck=Date.now();fetch('/api/neck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pan,tilt,speed:70})}).catch(()=>{})}
+async function startCamera(){if(!navigator.mediaDevices?.getUserMedia)return;try{video.srcObject=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});await video.play();if('FaceDetector'in window){detector=new FaceDetector({fastMode:true,maxDetectedFaces:1});track()}}catch(e){label.title='Camera unavailable: '+e.message}}
+async function track(){try{const found=await detector.detect(video);if(found.length){const b=found[0].boundingBox,x=(b.x+b.width/2)/video.videoWidth-.5,y=(b.y+b.height/2)/video.videoHeight-.5;face.style.setProperty('--gx',`${x*36}px`);face.style.setProperty('--gy',`${y*24}px`);neck(x*55,y*24)}}catch(e){}setTimeout(track,250)}poll();
+const trackingMode=new URLSearchParams(location.search).get('tracking');
+if(trackingMode==='ros'){const script=document.createElement('script');script.src='/static/site/hri-gaze.js';document.body.append(script);}else if(trackingMode==='preview'){
+let lastGaze=0;addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='preview-gaze')return;const {u,v}=event.data;if(!Number.isFinite(u)||!Number.isFinite(v))return;lastGaze=performance.now();face.style.setProperty('--gx',`${Math.max(-1,Math.min(1,u))*30}px`);face.style.setProperty('--gy',`${Math.max(-1,Math.min(1,v))*20}px`)});setInterval(()=>{if(performance.now()-lastGaze>600){face.style.setProperty('--gx','0px');face.style.setProperty('--gy','0px')}},200);
+}else{startCamera();}
+</script></body></html>'''
 
 def _resident_js():
     return """const q=x=>document.getElementById(x),chat=q('chat'),form=q('messageForm'),input=q('messageInput'),status=q('voiceStatus'),talk=q('talkButton');function add(role,text){chat.querySelector('.chat-empty')?.remove();let d=document.createElement('div');d.className='turn '+role;d.textContent=text;chat.append(d);chat.scrollTop=chat.scrollHeight}function hardware(state){fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state})}).catch(()=>{})}function speak(text){if('speechSynthesis'in window){let u=new SpeechSynthesisUtterance(text);u.onend=()=>hardware('idle');u.onerror=()=>hardware('idle');window.speechSynthesis.speak(u)}else hardware('idle')}let sending=false;async function send(message){if(sending)return;sending=true;form.querySelector('button').disabled=true;add('user',message);status.textContent='Thinking…';try{let r=await fetch('/api/conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The request failed.');add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;input.value=message;hardware('idle')}finally{sending=false;form.querySelector('button').disabled=false;input.focus()}}form.onsubmit=e=>{e.preventDefault();let t=input.value.trim();if(t&&!sending){input.value='';send(t)}};const server=talk.dataset.serverTranscription==='true',SR=window.SpeechRecognition||window.webkitSpeechRecognition;let recorder,chunks=[],stream;async function uploadRecording(blob){status.textContent='Thinking…';let bytes=new Uint8Array(await blob.arrayBuffer()),binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));try{let r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(binary),content_type:blob.type||'audio/webm'})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The recording could not be processed.');add('user',d.transcript);add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}finally{talk.disabled=false}}if(server&&navigator.mediaDevices&&window.MediaRecorder){talk.disabled=false;talk.onclick=async()=>{if(recorder&&recorder.state==='recording'){recorder.stop();talk.textContent='Start speaking';return}try{stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.onstop=()=>{stream.getTracks().forEach(t=>t.stop());talk.disabled=true;uploadRecording(new Blob(chunks,{type:recorder.mimeType||'audio/webm'}))};recorder.start();hardware('listening');talk.textContent='Stop speaking';status.textContent='Listening…'}catch(e){status.textContent='Microphone access failed. Please type below.'}}}else if(SR){talk.disabled=false;talk.onclick=()=>{let r=new SR();r.lang=navigator.language;r.onresult=e=>{hardware('idle');input.value=e.results[0][0].transcript;status.textContent='Check what I heard, then press Send.'};r.onerror=()=>{hardware('idle');status.textContent='I could not hear that. Please type below.'};r.start();hardware('listening');status.textContent='Listening…'}}else{talk.disabled=true;status.textContent='Voice is unavailable in this browser. Please type below.'}"""
@@ -170,6 +198,9 @@ def make_handler(app):
         p=urlparse(self.path); notice=parse_qs(p.query).get("notice",[""])[0]
         if p.path=="/":self.send(landing_page());return
         if p.path in {"/fred", "/fred/"}:self.send(fred_page());return
+        if p.path in {"/head", "/head/"}:self.send(_head_page());return
+        if p.path in {"/test", "/test/"}:self.send(public_asset('/static/site/laptop-test.html'));return
+        if p.path=="/api/robot-state":self.json(app.robot_state());return
         if p.path.startswith("/static/site/"):
             asset=public_asset(p.path)
             if asset is not None:self.send(asset,kind=mimetypes.guess_type(p.path)[0] or "application/octet-stream");return
@@ -201,7 +232,7 @@ def make_handler(app):
                 if not 0<length<=16384:raise ValueError("Message is too large or empty.")
                 data=json.loads(self.rfile.read(length)); message=data.get("message") if isinstance(data,dict) else None
                 if not isinstance(message,str) or not message.strip() or len(message)>2000:raise ValueError("Enter a valid message of 1–2000 characters.")
-                app.set_status("thinking"); reply,risk=app.conversation.respond(message.strip()); app.set_status("alert" if risk is RiskLevel.URGENT else "speaking"); app.store.record_health("check_in","conversation"); self.json({"reply":reply,"risk":risk.value});return
+                app.set_status("thinking"); reply,risk=app.conversation.respond(message.strip()); app.set_status("alert" if risk is RiskLevel.URGENT else "speaking",reply); app.store.record_health("check_in","conversation"); self.json({"reply":reply,"risk":risk.value});return
             except (ValueError,json.JSONDecodeError) as e:app.set_status("idle");self.json({"error":str(e)},400);return
             except RemoteServiceError as e:app.set_status("idle");self.json({"error":str(e)},502);return
         if p=="/api/status":
@@ -211,6 +242,11 @@ def make_handler(app):
                 if state not in {"idle","listening"}:raise ValueError("Invalid hardware status")
                 app.set_status(state);self.json({"status":state});return
             except (AttributeError,ValueError,json.JSONDecodeError) as e:self.json({"error":str(e)},400);return
+        if p=="/api/neck":
+            try:
+                if not 0<length<=256:raise ValueError("Invalid neck command")
+                data=json.loads(self.rfile.read(length));app.move_neck(data["pan"],data["tilt"],data.get("speed",90));self.json(app.robot_state());return
+            except (KeyError,TypeError,ValueError,json.JSONDecodeError) as e:self.json({"error":str(e)},400);return
         if p=="/api/voice":
             try:
                 if length>12_000_000:raise ValueError("Recording is too large")

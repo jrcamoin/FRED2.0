@@ -1,5 +1,7 @@
 # Dementia Care Robot
 
+** pi password - pidementiarobot
+
 An early, safety-first software foundation for an assistive robot supporting people living with dementia and their caregivers.
 
 This repository now provides a working, hardware-neutral Python prototype for:
@@ -36,6 +38,16 @@ Choose **Open your robot** to enter FRED at `/app`; caregiver tools remain at
 directly into this server's robot app. Future customer accounts will need
 purchase verification and a mapping from each customer to their own device;
 the existing caregiver password is not a customer account system.
+
+The two-screen Raspberry Pi build uses `/head` on the head LCD and `/app` on
+the body touchscreen. Both are served by the same process and share one robot
+state, so listening, thinking, speaking, alert expressions, camera gaze, LED
+state, and RP2040 neck motion stay synchronized. See
+[docs/HARDWARE.md](docs/HARDWARE.md) for wiring and dual-kiosk launch commands.
+
+For ROS 2 person tracking, see [ros2/README.md](ros2/README.md). The separate
+`fred_hri` package provides MediaPipe perception, neck PID coordination and a
+WebSocket display gateway. Open `/head?tracking=ros` to use it with the head UI.
 
 Python 3.11+ is required. The only runtime package is `cryptography`.
 
@@ -101,6 +113,40 @@ Press and hold **Hold to talk**, speak, and release. The browser sends that sing
 Conversation text and recorded clips are sent to the configured provider only when `ROBOT_LLM_API_KEY` is present. Audio is not saved locally, but the transcript is retained in the local conversation history until **Clear private conversation** is pressed. Explicit danger or distress is screened before the conversation model call; urgent messages use a fixed safety response. API failures are reported rather than disguised as generated replies. For a real deployment, replace the `.env` key with a device secret store and obtain explicit consent before sending data remotely.
 
 ## Display on a tablet
+
+### Laptop camera and hands-free test
+
+Start `dementia-care-robot web --offline` and open
+`http://127.0.0.1:8080/test` in Chrome. No ROS, Pi or servos are needed.
+Click **Start camera** and allow access: a green box marks the selected face,
+grey boxes mark other faces, and a dot marks the eye center. The adjacent
+head preview follows that target. Move sideways, leave the frame, and bring
+another person into view to test selection and target loss. This uses browser
+MediaPipe face detection, not the ROS Face Landmarker/PID pipeline, and never
+sends physical neck commands. Camera video stays in the browser; initial
+library/model downloads require internet access.
+
+In the companion panel (also available directly at `/app`), click
+**Enable hands-free · Hey FRED** once and allow microphone access. Say
+“Hey FRED, how are you?” or “Hey FRED”, then ask your question. A short pause
+submits the request; FRED speaks the reply and resumes waiting for its name.
+The microphone recognizer pauses during playback to avoid hearing its own
+reply. Turn hands-free off to return to typing/manual recording. Hiding the
+page pauses camera and hands-free mode.
+
+This laptop mode uses browser speech recognition to recognize the wake name;
+it is not a dedicated offline wake-word model. The browser may send continuous
+audio to its speech provider, including before “FRED”. `--offline` disables
+the configured conversation/transcription API, not the browser's recognition
+service. Speech availability depends on browser, network and permissions.
+Remove `--offline` to use your configured conversation model. Test one
+conversation tab at a time. Production on-device wake detection is still a
+separate integration, and neither camera tracking nor wake recognition
+identifies or authenticates the speaker.
+
+Developer checks: `node --test tests/test_wake_voice.cjs` and
+`python -m unittest discover -s tests -v`. Camera permission, recognition
+accuracy and speaker/microphone echo must also be checked interactively.
 
 For visual testing on the same computer, `dementia-care-robot web --open` is sufficient. To serve the interface to a tablet on the same trusted Wi-Fi network:
 

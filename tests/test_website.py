@@ -36,6 +36,10 @@ class WebsiteTests(unittest.TestCase):
                     ('/static/site/conversion.css', b'text/css'),
                     ('/static/site/script.js', b'const header'),
                     ('/static/site/assets/hero-robot.png', b'image/png'),
+                    ('/test', b'FRED laptop lab'),
+                    ('/static/site/laptop-test.js', b'detectForVideo'),
+                    ('/static/site/wake-voice.js', b'fredWakeCommand'),
+                    ('/static/site/hri-gaze.js', b'WebSocket'),
                 ]:
                     with self.subTest(path=path):
                         request = Request(path)

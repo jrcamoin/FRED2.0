@@ -29,14 +29,18 @@ def hardware_report(pico_device: str = "auto") -> list[tuple[str, bool, str]]:
     device = discover_pico_device() if pico_device == "auto" else pico_device
     pico_found = bool(device and Path(device).exists())
     pico_access = bool(pico_found and os.access(device, os.R_OK | os.W_OK))
+    drm_connectors = list(Path("/sys/class/drm").glob("card*-HDMI-A-*/status"))
+    connected_displays = sum(1 for path in drm_connectors if path.read_text(errors="replace").strip() == "connected")
     display = Path("/dev/fb0").exists() or Path("/dev/dri/card0").exists()
+    cameras = sorted(Path("/dev").glob("video*"))
     playback, capture = _command_has_device("aplay"), _command_has_device("arecord")
     checks = [
-        ("Model", "Raspberry Pi 3 Model B" in model, model),
+        ("Model", "Raspberry Pi 5" in model, model),
         ("Python", sys.version_info >= (3, 11), platform.python_version()),
         ("Pico", pico_found, device or "not found; connect the Pico with a data-capable USB cable"),
         ("Pico access", pico_access, "read/write available" if pico_access else "device not found" if not pico_found else "permission denied; add the service user to dialout"),
-        ("Display", display, "framebuffer/DRM detected" if display else "no framebuffer or DRM display detected"),
+        ("Displays", connected_displays >= 2, f"{connected_displays} connected HDMI displays" if drm_connectors else "DRM connector status unavailable" if display else "no framebuffer or DRM display detected"),
+        ("Camera", bool(cameras), str(cameras[0]) if cameras else "no /dev/video* camera detected"),
         ("Audio output", playback, "ALSA playback device detected" if playback else "no ALSA playback device detected; run aplay -l"),
         ("Microphone", capture, "ALSA capture device detected" if capture else "no ALSA capture device detected; run arecord -l"),
     ]
@@ -134,6 +138,13 @@ class PicoBridge:
         if state not in self.VALID_STATES:
             raise ValueError(f"Unknown LED state: {state}")
         self._write(f"LED {state}\n".encode())
+
+    def move_neck(self, pan: float, tilt: float, speed: int = 90) -> None:
+        """Request a bounded neck pose; trajectory generation stays on the MCU."""
+        pan = max(-60.0, min(60.0, float(pan)))
+        tilt = max(-25.0, min(25.0, float(tilt)))
+        speed = max(10, min(180, int(speed)))
+        self._write(f"NECK {pan:.1f} {tilt:.1f} {speed}\n".encode())
 
     def _write(self, data: bytes) -> None:
         try:

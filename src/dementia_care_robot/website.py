@@ -42,7 +42,8 @@ def public_asset(path: str):
     assets = {
         "/static/site/" + name: SITE_DIR / name
         for name in ("styles.css", "conversion.css", "script.js", "fred.css",
-                     "app.css", "assets/hero-robot.png")
+                     "app.css", "assets/hero-robot.png", "hri-gaze.js",
+                     "laptop-test.html", "laptop-test.js", "wake-voice.js")
     }
     asset = assets.get(path)
     return asset.read_bytes() if asset else None

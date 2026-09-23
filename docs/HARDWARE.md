@@ -4,9 +4,10 @@
 
 | Part | Role |
 |---|---|
-| Raspberry Pi 3 Model B v1.2 | Runs the Python web server, remote Whisper/LLM calls, storage, Wi-Fi/Ethernet, and LCD kiosk browser |
-| Raspberry Pi Pico / RP2040 | Owns LED timing and reads physical switches over USB serial |
-| LCD screen | HDMI display for the FRED dashboard; touch, mouse, or switches provide input |
+| Raspberry Pi 5 | Runs the Python server, two Chromium windows, camera/audio, storage, and AI integrations |
+| Raspberry Pi Pico / RP2040 | Owns LED timing, neck servo trajectories, and physical switches over USB serial |
+| Head LCD (HDMI-0) | Displays `/head`: expressive face, local camera gaze, and behavior state |
+| Body LCD (HDMI-1) | Displays `/app`: conversation, reminders, photos, and touch controls |
 | Microphone | Prefer a USB microphone or USB audio adapter connected to the device running the browser |
 | Speakers | Connect to the tablet, HDMI display, USB audio adapter, or Pi analog output |
 | Addressable LED ring | Connect to Pico; shows idle, listening, thinking, speaking, and alert states |
@@ -23,6 +24,8 @@ The defaults are at the top of `firmware/pico/main.py` and can be changed there.
 | LED ring data | GP16 through a suitable logic-level shifter when the ring is powered at 5 V |
 | HELP switch | GP14 to switch, other switch terminal to GND |
 | ACTION switch | GP15 to switch, other switch terminal to GND |
+| Pan servo signal | GP18 (use a separate servo-rated supply with common ground) |
+| Tilt servo signal | GP19 (use a separate servo-rated supply with common ground) |
 | Pi communication | Pico USB data port to a Pi USB port; FRED discovers it automatically |
 
 The switches use internal pull-ups and are active-low. Firmware debounce is included.
@@ -52,6 +55,7 @@ The Pico protocol is deliberately small:
 
 ```text
 Pi -> Pico: LED idle|listening|thinking|speaking|alert|off
+Pi -> Pico: NECK pan_degrees tilt_degrees speed_degrees_per_second
 Pico -> Pi: SWITCH HELP PRESS
 Pico -> Pi: SWITCH HELP RELEASE
 ```
@@ -60,7 +64,7 @@ Pressing HELP invokes the existing urgent caregiver-notification path. At presen
 
 ## Run on the Pi and LCD
 
-Install the current Raspberry Pi OS Desktop image (Debian Trixie) for the Raspberry Pi 3 Model B v1.2 and attach the LCD over HDMI. Both 32-bit and 64-bit Raspberry Pi OS support the Pi 3; the 32-bit image leaves more of its 1 GB RAM available for Chromium. Raspberry Pi OS includes Python 3 and the desktop image includes Chromium. The Pi 3 Model B has built-in 2.4 GHz Wi-Fi and Ethernet. See the official [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/os.html) and [Pi 3 Model B specifications](https://www.raspberrypi.com/products/raspberry-pi-3-model-b/).
+Install 64-bit Raspberry Pi OS Desktop on the Raspberry Pi 5 and attach both LCDs before boot so the desktop detects their layout. Raspberry Pi OS includes Python 3 and the desktop image includes Chromium. See the official [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/os.html).
 
 ```bash
 sudo apt update
@@ -80,7 +84,14 @@ python -c "from cryptography.fernet import Fernet; print('cryptography OK')"
 python -m unittest discover -s tests -v
 ```
 
-For the Pi-attached LCD, launch Chromium in kiosk mode with `chromium --kiosk --noerrdialogs --disable-session-crashed-bubble http://127.0.0.1:8080`. Localhost is a secure browser context for microphone capture. With a configured API key, the page records a single clip and sends it to the server transcription endpoint; without one, it uses browser speech recognition when Chromium provides it. Typed conversation remains available in either mode. A separate tablet should use the HTTPS setup in the README.
+For two Pi-attached LCDs under X11, identify their layout with `xrandr --listmonitors`, then launch one Chromium profile per screen. This example assumes two 1920-pixel-wide screens side by side:
+
+```bash
+chromium --user-data-dir=/tmp/fred-head --app=http://127.0.0.1:8080/head --window-position=0,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
+chromium --user-data-dir=/tmp/fred-body --app=http://127.0.0.1:8080/app --window-position=1920,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
+```
+
+Adjust the positions to the layout reported by `xrandr`; HDMI connector numbers do not necessarily equal X display numbers. Grant the head profile camera permission once during setup. Camera frames remain in that browser and are used only for gaze/neck targets. The body browser captures speech and sends one clip when server transcription is configured. Route system audio to the head speakers using Raspberry Pi audio settings or `wpctl`.
 
 For an appliance-style installation, copy the repository to `/opt/fred`, create a dedicated `fred` system user, create `/var/lib/fred` owned by that user, install into `/opt/fred/.venv`, and install `deploy/fred.service` as `/etc/systemd/system/fred.service`. The supplied unit grants the standard `dialout`, `video`, and `audio` supplementary groups. Review the unit paths before starting it.
 
