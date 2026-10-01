@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Human Frame Robotics · Vision Deck</title>
+  <style>
+    :root{--ink:#102c27;--green:#174c3d;--mint:#d8efdf;--cream:#f7f4e9;--lime:#c7e77b;--orange:#dc9067;--white:#fff;--muted:#526e63}
+    *{box-sizing:border-box}html,body{margin:0;background:#071d17;color:var(--ink);font-family:Inter,Avenir,Arial,sans-serif}button{font:inherit}
+    .deck{min-height:100vh}.slide{display:none;position:relative;width:100%;min-height:100vh;padding:6.5vh 7.5vw 7vh;overflow:hidden;background:var(--cream)}.slide.active{display:flex;flex-direction:column}
+    .slide.dark{background:var(--ink);color:var(--cream)}.slide.mint{background:var(--mint)}.slide.green{background:var(--green);color:var(--cream)}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:1rem;font-size:clamp(11px,1.05vw,17px);font-weight:800;letter-spacing:.18em;text-transform:uppercase;z-index:2}.brand{display:flex;align-items:center;gap:.8rem}.mark{display:inline-grid;grid-template-columns:repeat(2,10px);gap:4px;transform:rotate(-13deg)}.mark i{display:block;width:10px;height:10px;border-radius:50%;background:var(--lime)}
+    .kicker{margin:8vh 0 1.5vh;font-size:clamp(13px,1.2vw,19px);font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}.dark .kicker,.green .kicker{color:var(--lime)}
+    h1,h2,h3,p{margin:0}h1{font-size:clamp(55px,8.3vw,150px);line-height:.93;letter-spacing:-.065em;max-width:1000px}h2{font-size:clamp(42px,5.1vw,92px);line-height:1.03;letter-spacing:-.055em;max-width:1150px}h3{font-size:clamp(23px,2.3vw,41px);line-height:1.12;letter-spacing:-.035em}.lead{font-size:clamp(21px,2.25vw,38px);line-height:1.3;max-width:980px;margin-top:3vh}.sub{font-size:clamp(16px,1.45vw,25px);line-height:1.45;max-width:900px;margin-top:2vh;color:var(--muted)}.dark .sub,.green .sub{color:#bbd1c6}
+    .content{flex:1;display:flex;flex-direction:column;justify-content:center;z-index:2}.footer{display:flex;justify-content:space-between;align-items:end;gap:2rem;z-index:2;font-size:clamp(10px,.9vw,15px);line-height:1.4;color:var(--muted)}.dark .footer,.green .footer{color:#a5c1b1}.footer a{color:inherit}
+    .grid{display:grid;gap:1.2vw;margin-top:5vh}.cols2{grid-template-columns:repeat(2,minmax(0,1fr))}.cols3{grid-template-columns:repeat(3,minmax(0,1fr))}.card{border-radius:24px;padding:2.2vw;background:#fff;border:1px solid #d3e2d8;min-height:18vh}.dark .card,.green .card{background:#ffffff12;border-color:#ffffff32}.card .number{font-size:clamp(36px,5vw,90px);font-weight:800;letter-spacing:-.06em;color:var(--green)}.dark .card .number,.green .card .number{color:var(--lime)}.card p{font-size:clamp(15px,1.3vw,23px);line-height:1.4;margin-top:1vh}.eyebrow{font-size:clamp(11px,1vw,17px);font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--green);margin-bottom:1vh}.dark .eyebrow,.green .eyebrow{color:var(--lime)}
+    .split{display:grid;grid-template-columns:1.12fr .88fr;gap:5vw;align-items:center;flex:1}.statement{font-size:clamp(27px,3vw,56px);line-height:1.2;letter-spacing:-.04em;max-width:900px}.statement strong{color:var(--green)}.dark .statement strong{color:var(--lime)}
+    .orbit{width:min(42vw,560px);aspect-ratio:1;border:2px solid #b8d4be;border-radius:50%;position:relative;display:grid;place-items:center;margin:auto;background:radial-gradient(circle,#f9fff7 0 27%,transparent 28%)}.orbit:before,.orbit:after{content:'';position:absolute;inset:13%;border:1px solid #b8d4be;border-radius:50%}.orbit:after{inset:30%}.core{z-index:2;background:var(--green);color:#fff;border-radius:50%;width:37%;aspect-ratio:1;display:grid;place-items:center;text-align:center;font-size:clamp(16px,2vw,32px);font-weight:800;line-height:1.1}.node{position:absolute;z-index:3;background:var(--lime);border-radius:100px;padding:.7em 1.1em;font-weight:800;font-size:clamp(12px,1.2vw,20px)}.n1{top:4%;left:5%}.n2{right:-3%;top:38%}.n3{bottom:4%;left:16%}
+    .flow{display:flex;gap:1vw;align-items:stretch;margin-top:5vh}.step{flex:1;padding:2vw;border-radius:22px;background:#fff;min-height:22vh}.step b{display:block;font-size:clamp(23px,2.4vw,40px);margin-bottom:1.5vh}.step span{font-size:clamp(15px,1.3vw,22px);line-height:1.35}.arrow{display:grid;place-items:center;font-size:clamp(30px,3vw,50px);color:var(--green)}
+    .robot{width:min(35vw,440px);aspect-ratio:.82;background:linear-gradient(145deg,#3d7160,#15392f);border-radius:43% 43% 38% 38%;box-shadow:inset -22px -25px 40px #102b24,0 34px 50px #09271e45;position:relative;margin:auto}.robot .eyes{display:flex;justify-content:space-evenly;position:absolute;top:35%;width:100%}.robot .eye{width:25%;aspect-ratio:.85;background:#eaffdc;border-radius:48%;box-shadow:0 0 35px #c7e77b88}.robot .mouth{position:absolute;bottom:24%;left:40%;width:20%;height:8%;border-bottom:10px solid #eaffdc;border-radius:50%}.tag{display:inline-block;padding:.65em 1em;background:var(--lime);color:var(--ink);border-radius:100px;font-size:clamp(13px,1.1vw,18px);font-weight:800;margin-top:3vh}
+    .metric-row{display:flex;align-items:baseline;gap:1rem;margin-top:4vh}.metric-row b{font-size:clamp(60px,7vw,125px);letter-spacing:-.07em}.metric-row span{font-size:clamp(18px,1.8vw,30px);line-height:1.2;max-width:450px}.rule{height:1px;background:#94b2a4;margin:3vh 0}.note{font-size:clamp(13px,1.1vw,18px);line-height:1.45;color:var(--muted);margin-top:2vh;max-width:1050px}.dark .note,.green .note{color:#bbd1c6}
+    .pill-list{display:flex;gap:.8vw;flex-wrap:wrap;margin-top:4vh}.pill{padding:.75em 1.1em;border-radius:100px;background:#ffffff1d;border:1px solid #ffffff45;font-size:clamp(15px,1.2vw,22px)}
+    .controls{position:fixed;bottom:16px;right:22px;display:flex;align-items:center;gap:8px;z-index:9;background:#071d17e8;color:#fff;padding:8px;border-radius:100px;box-shadow:0 6px 25px #0004}.controls button{border:0;border-radius:50%;background:#d8efdf;color:#102c27;width:36px;height:36px;cursor:pointer}.controls span{min-width:54px;text-align:center;font-size:13px}.sr-only{position:absolute;left:-9999px}
+    @media(max-width:800px){.slide{padding:6vh 6vw;min-height:100svh}.split{grid-template-columns:1fr}.orbit{width:min(67vw,350px)}.robot{width:min(45vw,250px)}.grid.cols3{grid-template-columns:1fr 1fr}.grid.cols2{grid-template-columns:1fr}.card{padding:20px}.flow{flex-direction:column}.arrow{transform:rotate(90deg)}.footer{margin-top:2vh}}
+    @media print{@page{size:16in 9in;margin:0}.slide,.slide.active{display:flex!important;width:16in;height:9in;min-height:9in;break-after:page;page-break-after:always}.controls{display:none}.slide:last-of-type{break-after:auto}}
+  </style>
+</head>
+<body>
+<main class="deck" aria-label="Human Frame Robotics pitch deck">
+  <section class="slide dark active" aria-label="Slide 1: Title">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Vision deck · 2026</span></div>
+    <div class="content"><p class="kicker">A platform for human–robot interaction</p><h1>The human<br>framework.</h1><p class="lead">Making useful, approachable robots more affordable to build—and to live with.</p><span class="tag">Consumers + developers</span></div>
+    <div class="footer"><span>Human Frame Robotics</span><span>01 / 09</span></div>
+  </section>
+  <section class="slide mint" aria-label="Slide 2: Vision">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Vision</span></div>
+    <div class="split"><div><p class="kicker">Our north star</p><h2>Human–robot interaction for more people.</h2><p class="statement" style="margin-top:4vh">Provide <strong>consumers and developers</strong> with an affordable platform and framework for human–robot interaction.</p></div><div class="orbit"><div class="core">Human<br>Frame</div><span class="node n1">People</span><span class="node n2">Developers</span><span class="node n3">Robots</span></div></div>
+    <div class="footer"><span>One foundation. Many meaningful experiences.</span><span>02 / 09</span></div>
+  </section>
+  <section class="slide" aria-label="Slide 3: Problem">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Problem</span></div>
+    <div class="content"><p class="kicker">Two unmet needs</p><h2>People want companions.<br>Builders need a foundation.</h2><div class="grid cols2"><div class="card"><p class="eyebrow">Consumer problem</p><h3>“I want an affordable robotic companion.”</h3><p>Today’s options can be expensive, limited, or difficult to personalize for everyday life.</p></div><div class="card"><p class="eyebrow">Developer problem</p><h3>“I want a platform for HCI software.”</h3><p>Teams repeatedly assemble voice, expression, interaction logic, and hardware integration from scratch.</p></div></div></div>
+    <div class="footer"><span>HCI: human–computer interaction · HRI: human–robot interaction</span><span>03 / 09</span></div>
+  </section>
+  <section class="slide green" aria-label="Slide 4: Market">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Market</span></div>
+    <div class="content"><p class="kicker">Market signal</p><h2>Robots are entering homes and everyday spaces.</h2><div class="grid cols3"><div class="card"><span class="number">34.2M</span><p>Consumer service robots sold worldwide in 2025, up 37% year over year.</p></div><div class="card"><span class="number">250K</span><p>Professional service robots shipped worldwide in 2025, up 24%.</p></div><div class="card"><span class="number">2</span><p>Customer paths for Human Frame: accessible companions for consumers and a flexible platform for developers.</p></div></div><p class="note">Most current consumer robot sales are domestic task robots. These figures show service robot adoption, not the size of the companion robot or HCI software market. We will validate those segments directly.</p></div>
+    <div class="footer"><span>Source: <a href="https://ifr.org/ifr-press-releases/news/robotics-1">International Federation of Robotics, World Robotics 2026 Service Robots</a></span><span>04 / 09</span></div>
+  </section>
+  <section class="slide mint" aria-label="Slide 5: Product">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Product</span></div>
+    <div class="split"><div><p class="kicker">One platform, two experiences</p><h2>Build once.<br>Make it personal.</h2><div class="grid cols2"><div class="card"><p class="eyebrow">For developers</p><h3>Reusable HCI tools</h3><p>Voice, expressive behavior, interaction state, and hardware interfaces in one adaptable foundation.</p></div><div class="card"><p class="eyebrow">For consumers</p><h3>FRED, our first companion</h3><p>A friendly robot experience for conversation, reminders, and personalized interactions.</p></div></div></div><div class="robot" aria-label="Illustration of FRED"><div class="eyes"><div class="eye"></div><div class="eye"></div></div><div class="mouth"></div></div></div>
+    <div class="footer"><span>FRED demonstrates the framework; the platform can support many applications.</span><span>05 / 09</span></div>
+  </section>
+  <section class="slide" aria-label="Slide 6: Business model">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Business model</span></div>
+    <div class="content"><p class="kicker">Proposed route to market</p><h2>Companion hardware.<br>Developer platform.</h2><div class="flow"><div class="step"><p class="eyebrow">01 · Validate</p><b>Consumer + developer pilots</b><span>Test usefulness, affordability, and developer setup with both customer groups.</span></div><div class="arrow">→</div><div class="step"><p class="eyebrow">02 · Consumer</p><b>Robot + optional service</b><span>Sell an accessible companion, with optional software features and support. Pricing to be tested.</span></div><div class="arrow">→</div><div class="step"><p class="eyebrow">03 · Developer</p><b>Framework access</b><span>Offer tools, reference designs, and commercial licensing for new HCI applications.</span></div></div><p class="note">This is a model hypothesis. No pricing, revenue, or distribution agreements are claimed.</p></div>
+    <div class="footer"><span>Measure willingness to pay before scaling hardware.</span><span>06 / 09</span></div>
+  </section>
+  <section class="slide dark" aria-label="Slide 7: Traction">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Traction</span></div>
+    <div class="content"><p class="kicker">Built today</p><h2>From vision to working prototype.</h2><div class="grid cols3"><div class="card"><p class="eyebrow">Interaction software</p><h3>FRED runs locally</h3><p>Conversation, reminders, personalization, and an expressive face demonstrate core interaction flows.</p></div><div class="card"><p class="eyebrow">Hardware path</p><h3>Dual-screen design</h3><p>Separate head and body displays, expression state, camera tracking, and Raspberry Pi integration path.</p></div><div class="card"><p class="eyebrow">Next proof</p><h3>Two-sided pilots</h3><p>Validate companion appeal, reliability, developer experience, and willingness to pay.</p></div></div><p class="note">No customer, revenue, or pilot traction is claimed here. Replace this slide with measured results as pilots begin.</p></div>
+    <div class="footer"><span>Product evidence: current Human Frame Robotics repository.</span><span>07 / 09</span></div>
+  </section>
+  <section class="slide green" aria-label="Slide 8: Team">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>Team</span></div>
+    <div class="content"><p class="kicker">The team to deliver this vision</p><h2>Human-centered robotics takes more than hardware.</h2><div class="grid cols3"><div class="card"><p class="eyebrow">Founding team</p><h3>Add names + roles</h3><p>Founders, engineering leads, and relevant experience.</p></div><div class="card"><p class="eyebrow">HCI expertise</p><h3>Add advisors</h3><p>Interaction design, accessibility, robotics, and product experience.</p></div><div class="card"><p class="eyebrow">Pilot partners</p><h3>Add organizations</h3><p>Consumer testers and developer teams building on the platform.</p></div></div></div>
+    <div class="footer"><span>Names and affiliations intentionally left for the founders to verify.</span><span>08 / 09</span></div>
+  </section>
+  <section class="slide dark" aria-label="Slide 9: The Ask">
+    <div class="top"><span class="brand"><span class="mark"><i></i><i></i><i></i><i></i></span> Human Frame Robotics</span><span>The ask</span></div>
+    <div class="content"><p class="kicker">Build the next interaction together</p><h2>Help make human–robot interaction accessible.</h2><p class="lead">We’re seeking people and partners to shape an affordable companion and an open path for HCI development.</p><div class="grid cols3"><div class="card"><p class="eyebrow">Consumers</p><h3>Test the companion</h3><p>Tell us what feels useful, approachable, and worth bringing home.</p></div><div class="card"><p class="eyebrow">Developers</p><h3>Build on the framework</h3><p>Help define the tools and interfaces that make HCI software easier to create.</p></div><div class="card"><p class="eyebrow">Partners</p><h3>Pilot with us</h3><p>Work with us to validate real-world uses and the path to affordability.</p></div></div></div>
+    <div class="footer"><span>Human Frame Robotics · Let’s build what comes next.</span><span>09 / 09</span></div>
+  </section>
+</main>
+<div class="controls" aria-label="Slide controls"><button id="prev" aria-label="Previous slide">←</button><span id="count">1 / 9</span><button id="next" aria-label="Next slide">→</button></div>
+<script>
+  const slides=[...document.querySelectorAll('.slide')],count=document.getElementById('count');let index=0;
+  function show(n){index=Math.max(0,Math.min(slides.length-1,n));slides.forEach((slide,i)=>slide.classList.toggle('active',i===index));count.textContent=`${index+1} / ${slides.length}`;location.hash=`slide-${index+1}`;}
+  document.getElementById('prev').onclick=()=>show(index-1);document.getElementById('next').onclick=()=>show(index+1);
+  addEventListener('keydown',event=>{if(['ArrowRight','PageDown',' '].includes(event.key)){event.preventDefault();show(index+1)}if(['ArrowLeft','PageUp'].includes(event.key)){event.preventDefault();show(index-1)}if(event.key==='Home')show(0);if(event.key==='End')show(slides.length-1)});
+  const initial=Number(location.hash.match(/slide-(\d+)/)?.[1]);if(initial)show(initial-1);
+</script>
+</body>
+</html>
