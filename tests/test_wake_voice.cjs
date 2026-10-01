@@ -53,3 +53,31 @@ test('wake with no question expires without sending a conversation', async () =>
   await h.timer(15000);
   assert.equal(h.requests.filter(r=>r.url==='/api/conversation').length,0);
 });
+
+test('head display handles wake, request, and spoken reply', async () => {
+  const toggle = {}, status = {}, reply = {};
+  const timers = new Map(), recognizers = [], requests = []; let id = 0, utterance;
+  class Recognition {
+    constructor() { recognizers.push(this); }
+    start() {}
+    abort() { this.aborted = true; }
+    result(text) { this.onresult({resultIndex:0, results:[Object.assign([{transcript:text}], {isFinal:true})]}); }
+  }
+  const context = {
+    document:{getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply})[name]},
+    window:{SpeechRecognition:Recognition, speechSynthesis:{cancel() {}, speak(u) {utterance=u;}}},
+    navigator:{language:'en-US'}, addEventListener() {}, SpeechSynthesisUtterance:class {constructor(text){this.text=text;}},
+    setTimeout:(fn,ms) => {timers.set(++id,{fn,ms});return id;}, clearTimeout:id => timers.delete(id),
+    fetch:async (url,options) => {requests.push({url,options});return {ok:true,json:async()=>({reply:'Hello from FRED'})};},
+  };
+  vm.runInNewContext(source,context);
+  toggle.onclick(); recognizers[0].result('Hey Fred'); recognizers[0].result('How are you?');
+  const entry=[...timers].find(([,t])=>t.ms===1400); assert.ok(entry); timers.delete(entry[0]);
+  const pending=entry[1].fn();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(JSON.parse(requests.find(r=>r.url==='/api/conversation').options.body).message,'How are you?');
+  assert.equal(utterance.text,'Hello from FRED');
+  utterance.onend(); await pending;
+  assert.equal(reply.textContent,'Hello from FRED');
+  assert.equal(status.textContent,'Listening for “Hey FRED”…');
+});

@@ -105,18 +105,12 @@ def _page(app,notice=""):
 def _head_page():
     """Fullscreen expressive face for the head LCD; camera processing stays local."""
     return b'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FRED head</title><style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102720;color:#eef8f3;font-family:system-ui,sans-serif}.face{width:100vw;height:100vh;display:grid;place-items:center;position:relative;background:radial-gradient(circle at 50% 42%,#31584b,#102720 68%)}.eyes{display:flex;gap:13vw;transform:translate(var(--gx,0),var(--gy,0));transition:transform .18s ease}.eye{width:min(25vw,220px);height:min(31vw,270px);border-radius:48%;background:#eaf8f1;position:relative;box-shadow:0 0 45px #91d5b655}.pupil{position:absolute;width:35%;height:42%;border-radius:50%;background:#17382d;left:32%;top:29%}.mouth{position:absolute;top:72%;width:18vw;height:3.5vh;border-radius:0 0 90px 90px;border-bottom:1.7vh solid #d8eee4;transition:.2s}.label{position:absolute;bottom:2vh;opacity:.55;font-size:clamp(12px,2vw,20px)}video{display:none}.face.listening .eye{transform:scaleY(1.08)}.face.thinking .eyes{transform:translate(var(--gx,0),var(--gy,0)) rotate(-4deg)}.face.speaking .mouth{animation:talk .32s infinite alternate;height:8vh}.face.alert{background:radial-gradient(circle at 50% 42%,#70473e,#241915 70%)}.face.alert .pupil{transform:scale(.78)}.face.idle .eye{animation:blink 6s infinite}.face.off .eye{transform:scaleY(.08)}@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.06)}}@keyframes talk{to{height:3vh;transform:scaleX(.7)}}
-</style></head><body><main id="face" class="face idle" aria-label="FRED is calm"><div class="eyes"><div class="eye"><i class="pupil"></i></div><div class="eye"><i class="pupil"></i></div></div><div class="mouth"></div><div id="label" class="label">FRED</div><video id="camera" autoplay muted playsinline></video></main><script>
-const face=document.getElementById('face'),label=document.getElementById('label'),video=document.getElementById('camera');let sequence=-1,lastNeck=0,detector;
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102720;color:#eef8f3;font-family:system-ui,sans-serif}.face{width:100vw;height:100vh;display:grid;place-items:center;position:relative;background:radial-gradient(circle at 50% 42%,#31584b,#102720 68%)}.eyes{display:flex;gap:13vw;transform:translate(var(--gx,0),var(--gy,0));transition:transform .18s ease}.eye{width:min(25vw,220px);height:min(31vw,270px);border-radius:48%;background:#eaf8f1;position:relative;box-shadow:0 0 45px #91d5b655}.pupil{position:absolute;width:35%;height:42%;border-radius:50%;background:#17382d;left:32%;top:29%}.mouth{position:absolute;top:72%;width:18vw;height:3.5vh;border-radius:0 0 90px 90px;border-bottom:1.7vh solid #d8eee4;transition:.2s}.label{position:absolute;bottom:2vh;opacity:.55;font-size:clamp(12px,2vw,20px)}.face.listening .eye{transform:scaleY(1.08)}.face.thinking .eyes{transform:translate(var(--gx,0),var(--gy,0)) rotate(-4deg)}.face.speaking .mouth{animation:talk .32s infinite alternate;height:8vh}.face.alert{background:radial-gradient(circle at 50% 42%,#70473e,#241915 70%)}.face.alert .pupil{transform:scale(.78)}.face.idle .eye{animation:blink 6s infinite}.face.off .eye{transform:scaleY(.08)}@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.06)}}@keyframes talk{to{height:3vh;transform:scaleX(.7)}}.tracking-controls{position:absolute;top:2vh;right:2vw;z-index:3;text-align:right}.tracking-controls button{font:inherit;padding:.4em .7em;border:0;border-radius:10px;background:#eaf8f1;color:#17382d}.tracking-controls p{font-size:14px;background:#102720cc;padding:.3em;max-width:320px}.tracking-preview{position:absolute;top:10vh;right:2vw;width:min(32vw,320px);aspect-ratio:4/3;z-index:3;border:2px solid #eaf8f1;border-radius:12px;overflow:hidden;background:#102720}.tracking-preview[hidden]{display:none}.tracking-preview video,.tracking-preview canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+</style></head><body><main id="face" class="face idle" aria-label="FRED is calm"><div class="eyes"><div class="eye"><i class="pupil"></i></div><div class="eye"><i class="pupil"></i></div></div><div class="mouth"></div><div id="label" class="label">FRED</div><div class="tracking-controls"><button id="trackingToggle" type="button" aria-expanded="false" aria-controls="trackingPreview">Show tracking</button><p id="trackingStatus" role="status">Starting camera...</p></div><div id="trackingPreview" class="tracking-preview" hidden><video id="camera" autoplay muted playsinline></video><canvas id="trackingOverlay"></canvas></div><section style="position:absolute;bottom:6vh;left:5vw;right:5vw;text-align:center;z-index:2"><button id="wakeToggle" type="button" style="font:inherit;font-size:clamp(18px,3vw,28px);padding:.5em 1em;border:0;border-radius:16px;background:#eaf8f1;color:#17382d">Enable Hey FRED</button><p id="wakeStatus" role="status" aria-live="polite">Tap once to let FRED listen.</p><p id="wakeReply" aria-live="polite" style="font-size:clamp(16px,2vw,24px)"></p></section></main><script>
+const face=document.getElementById('face'),label=document.getElementById('label');let sequence=-1;
 async function poll(){try{const r=await fetch('/api/robot-state',{cache:'no-store'}),s=await r.json();if(s.sequence!==sequence){sequence=s.sequence;face.className='face '+s.state;face.setAttribute('aria-label','FRED is '+s.emotion);label.textContent=s.emotion==='calm'?'FRED':s.emotion;}}catch(e){}finally{setTimeout(poll,250)}}
-async function neck(pan,tilt){if(Date.now()-lastNeck<350)return;lastNeck=Date.now();fetch('/api/neck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pan,tilt,speed:70})}).catch(()=>{})}
-async function startCamera(){if(!navigator.mediaDevices?.getUserMedia)return;try{video.srcObject=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});await video.play();if('FaceDetector'in window){detector=new FaceDetector({fastMode:true,maxDetectedFaces:1});track()}}catch(e){label.title='Camera unavailable: '+e.message}}
-async function track(){try{const found=await detector.detect(video);if(found.length){const b=found[0].boundingBox,x=(b.x+b.width/2)/video.videoWidth-.5,y=(b.y+b.height/2)/video.videoHeight-.5;face.style.setProperty('--gx',`${x*36}px`);face.style.setProperty('--gy',`${y*24}px`);neck(x*55,y*24)}}catch(e){}setTimeout(track,250)}poll();
-const trackingMode=new URLSearchParams(location.search).get('tracking');
-if(trackingMode==='ros'){const script=document.createElement('script');script.src='/static/site/hri-gaze.js';document.body.append(script);}else if(trackingMode==='preview'){
-let lastGaze=0;addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='preview-gaze')return;const {u,v}=event.data;if(!Number.isFinite(u)||!Number.isFinite(v))return;lastGaze=performance.now();face.style.setProperty('--gx',`${Math.max(-1,Math.min(1,u))*30}px`);face.style.setProperty('--gy',`${Math.max(-1,Math.min(1,v))*20}px`)});setInterval(()=>{if(performance.now()-lastGaze>600){face.style.setProperty('--gx','0px');face.style.setProperty('--gy','0px')}},200);
-}else{startCamera();}
-</script></body></html>'''
+poll();
+</script><script type="module" src="/static/site/head-tracking.js"></script><script src="/static/site/wake-voice.js" defer></script></body></html>'''
 
 def _resident_js():
     return """const q=x=>document.getElementById(x),chat=q('chat'),form=q('messageForm'),input=q('messageInput'),status=q('voiceStatus'),talk=q('talkButton');function add(role,text){chat.querySelector('.chat-empty')?.remove();let d=document.createElement('div');d.className='turn '+role;d.textContent=text;chat.append(d);chat.scrollTop=chat.scrollHeight}function hardware(state){fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state})}).catch(()=>{})}function speak(text){if('speechSynthesis'in window){let u=new SpeechSynthesisUtterance(text);u.onend=()=>hardware('idle');u.onerror=()=>hardware('idle');window.speechSynthesis.speak(u)}else hardware('idle')}let sending=false;async function send(message){if(sending)return;sending=true;form.querySelector('button').disabled=true;add('user',message);status.textContent='Thinking…';try{let r=await fetch('/api/conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The request failed.');add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;input.value=message;hardware('idle')}finally{sending=false;form.querySelector('button').disabled=false;input.focus()}}form.onsubmit=e=>{e.preventDefault();let t=input.value.trim();if(t&&!sending){input.value='';send(t)}};const server=talk.dataset.serverTranscription==='true',SR=window.SpeechRecognition||window.webkitSpeechRecognition;let recorder,chunks=[],stream;async function uploadRecording(blob){status.textContent='Thinking…';let bytes=new Uint8Array(await blob.arrayBuffer()),binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));try{let r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(binary),content_type:blob.type||'audio/webm'})}),d=await r.json();if(!r.ok)throw new Error(d.error||'The recording could not be processed.');add('user',d.transcript);add('assistant',d.reply);status.textContent='Ready';speak(d.reply)}catch(e){status.textContent=e.message;hardware('idle')}finally{talk.disabled=false}}if(server&&navigator.mediaDevices&&window.MediaRecorder){talk.disabled=false;talk.onclick=async()=>{if(recorder&&recorder.state==='recording'){recorder.stop();talk.textContent='Start speaking';return}try{stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.onstop=()=>{stream.getTracks().forEach(t=>t.stop());talk.disabled=true;uploadRecording(new Blob(chunks,{type:recorder.mimeType||'audio/webm'}))};recorder.start();hardware('listening');talk.textContent='Stop speaking';status.textContent='Listening…'}catch(e){status.textContent='Microphone access failed. Please type below.'}}}else if(SR){talk.disabled=false;talk.onclick=()=>{let r=new SR();r.lang=navigator.language;r.onresult=e=>{hardware('idle');input.value=e.results[0][0].transcript;status.textContent='Check what I heard, then press Send.'};r.onerror=()=>{hardware('idle');status.textContent='I could not hear that. Please type below.'};r.start();hardware('listening');status.textContent='Listening…'}}else{talk.disabled=true;status.textContent='Voice is unavailable in this browser. Please type below.'}"""
@@ -179,7 +173,7 @@ def _multipart(handler,length):
 
 # Bind an application instance to a standard-library HTTP handler class. The
 # unusual one-space indentation below keeps the existing compact handler intact.
-def make_handler(app):
+def make_handler(app, head_only=False):
  class Handler(BaseHTTPRequestHandler):
     def auth(self):
         c=SimpleCookie(self.headers.get("Cookie","")); return "fred_session" in c and app.secrets.valid_session(c["fred_session"].value)
@@ -196,6 +190,9 @@ def make_handler(app):
         # GET routes render the two interfaces and decrypt uploaded media only
         # when it is requested; encrypted bytes remain on disk at rest.
         p=urlparse(self.path); notice=parse_qs(p.query).get("notice",[""])[0]
+        if head_only and p.path not in {"/", "/head", "/head/", "/api/robot-state", "/static/site/wake-voice.js", "/static/site/head-tracking.js", "/static/site/hri-gaze.js"}:
+            self.send_error(404);return
+        if head_only and p.path=="/":self.send(_head_page());return
         if p.path=="/":self.send(landing_page());return
         if p.path in {"/fred", "/fred/"}:self.send(fred_page());return
         if p.path in {"/head", "/head/"}:self.send(_head_page());return
@@ -221,6 +218,8 @@ def make_handler(app):
         # Caregiver mutations below the gate are temporarily open while
         # CAREGIVER_AUTH_ENABLED is False during local prototyping.
         p=urlparse(self.path).path; length=int(self.headers.get("Content-Length","0"))
+        if head_only and p not in {"/api/conversation", "/api/status", "/api/neck"}:
+            self.send_error(404);return
         if p=="/api/delivery-status":
             supplied=parse_qs(urlparse(self.path).query).get("token",[""])[0]
             if not supplied or supplied!=os.environ.get("ROBOT_DELIVERY_CALLBACK_TOKEN",""):self.send_error(403);return
@@ -303,16 +302,23 @@ def make_handler(app):
     def log_message(self,fmt,*args):print("WEB:",fmt%args)
  return Handler
 
-def serve(data_dir="data",host="127.0.0.1",port=8080,open_browser=False,certfile=None,keyfile=None,pico_device=None):
+def serve(data_dir="data",host="127.0.0.1",port=8080,open_browser=False,certfile=None,keyfile=None,pico_device=None,head_port=8081):
     """Start FRED's HTTP server and the background reminder-delivery loop."""
+    if head_port == port:raise ValueError("Head port must differ from the main port")
     app=RobotApplication(Path(data_dir),pico_device);server=ThreadingHTTPServer((host,port),make_handler(app))
-    if certfile and keyfile:ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(certfile,keyfile);server.socket=ctx.wrap_socket(server.socket,server_side=True)
+    try:head_server=ThreadingHTTPServer((host,head_port),make_handler(app,head_only=True))
+    except Exception:server.server_close();raise
+    if certfile and keyfile:
+        ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(certfile,keyfile)
+        server.socket=ctx.wrap_socket(server.socket,server_side=True)
+        head_server.socket=ctx.wrap_socket(head_server.socket,server_side=True)
     stop=threading.Event()
     def loop():
         while not stop.wait(1):app.scheduler.deliver_due()
     threading.Thread(target=loop,daemon=True).start()
+    threading.Thread(target=head_server.serve_forever,kwargs={"poll_interval":.5},daemon=True).start()
     if open_browser:threading.Timer(.5,lambda:webbrowser.open(f'{"https" if certfile else "http"}://{host}:{port}')).start()
-    print(f'FRED running at {"https" if certfile else "http"}://{host}:{port}')
+    print(f'FRED running at {"https" if certfile else "http"}://{host}:{port}; head at {"https" if certfile else "http"}://{host}:{head_port}')
     try:server.serve_forever(.5)
     except KeyboardInterrupt:pass
-    finally:stop.set();server.server_close();app.pico and app.pico.close()
+    finally:stop.set();head_server.shutdown();head_server.server_close();server.server_close();app.pico and app.pico.close()

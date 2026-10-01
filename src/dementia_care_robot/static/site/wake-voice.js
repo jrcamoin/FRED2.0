@@ -4,6 +4,69 @@ function fredWakeCommand(text) {
   return match ? text.slice(match.index + match[0].length).trim() : null;
 }
 if (typeof module !== 'undefined') module.exports = {fredWakeCommand};
+if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && !document.getElementById('talkButton')) (() => {
+  const toggle = document.getElementById('wakeToggle'), status = document.getElementById('wakeStatus');
+  const reply = document.getElementById('wakeReply');
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let enabled = false, recognition, armed = false, words = '', timer, restart, busy = false;
+  const hardware = state => fetch('/api/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({state})}).catch(() => {});
+  function stopListening() {
+    clearTimeout(restart); clearTimeout(timer);
+    if (recognition) { const old = recognition; recognition = null; old.onend = null; old.abort(); }
+  }
+  function listen() {
+    if (!enabled || busy || recognition) return;
+    const current = new Recognition(); recognition = current;
+    current.lang = navigator.language || 'en-US'; current.continuous = true; current.interimResults = false;
+    current.onresult = event => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (!event.results[i].isFinal) continue;
+        const heard = event.results[i][0].transcript.trim();
+        if (!armed) {
+          const command = fredWakeCommand(heard);
+          if (command === null) continue;
+          armed = true; words = command; hardware('listening');
+        } else words += ' ' + heard;
+        status.textContent = words.trim() ? `Heard: ${words.trim()}` : 'I’m listening. Ask your question…';
+        clearTimeout(timer); timer = setTimeout(submit, words.trim() ? 1400 : 10000);
+      }
+    };
+    current.onerror = event => {
+      if (recognition !== current || event.error === 'aborted' || event.error === 'no-speech') return;
+      enabled = false; stopListening(); hardware('idle'); toggle.textContent = 'Enable Hey FRED';
+      status.textContent = `Microphone error: ${event.error}. Tap to retry.`;
+    };
+    current.onend = () => { if (recognition === current) { recognition = null; if (enabled && !busy) restart = setTimeout(listen, 500); } };
+    try { current.start(); } catch (error) { enabled = false; recognition = null; status.textContent = `Microphone unavailable: ${error.message}`; }
+  }
+  async function submit() {
+    const message = words.trim(); armed = false; words = '';
+    if (!enabled || busy) return;
+    if (!message) { status.textContent = 'Say “Hey FRED” to try again.'; hardware('idle'); return; }
+    busy = true; stopListening(); status.textContent = 'Thinking…'; hardware('listening');
+    try {
+      const response = await fetch('/api/conversation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message})});
+      const data = await response.json(); if (!response.ok) throw Error(data.error || 'Conversation failed.');
+      reply.textContent = data.reply; status.textContent = 'FRED is speaking…';
+      if (!window.speechSynthesis) throw Error('Speech playback is unavailable in this browser');
+      await new Promise((resolve, reject) => {
+        const utterance = new SpeechSynthesisUtterance(data.reply);
+        const timeout = setTimeout(() => { window.speechSynthesis.cancel(); reject(Error('Speech playback timed out')); }, 30000);
+        utterance.onend = () => { clearTimeout(timeout); resolve(); };
+        utterance.onerror = () => { clearTimeout(timeout); reject(Error('Speech playback failed')); };
+        window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
+      });
+      status.textContent = 'Listening for “Hey FRED”…';
+    } catch (error) { status.textContent = `FRED could not respond: ${error.message}`; }
+    finally { busy = false; hardware('idle'); if (enabled) restart = setTimeout(listen, 700); }
+  }
+  toggle.onclick = () => {
+    if (enabled) { enabled = false; stopListening(); window.speechSynthesis?.cancel(); hardware('idle'); toggle.textContent = 'Enable Hey FRED'; status.textContent = 'Hands-free off.'; return; }
+    if (!Recognition) { status.textContent = 'Speech recognition is unavailable in this browser.'; return; }
+    enabled = true; toggle.textContent = 'Turn Hey FRED off'; status.textContent = 'Listening for “Hey FRED”…'; listen();
+  };
+  addEventListener('pagehide', () => { enabled = false; stopListening(); });
+})();
 if (typeof document !== 'undefined') (() => {
   const manual = document.getElementById('talkButton');
   if (!manual) return;
