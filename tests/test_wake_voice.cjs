@@ -81,3 +81,42 @@ test('head display handles wake, request, and spoken reply', async () => {
   assert.equal(reply.textContent,'Hello from FRED');
   assert.equal(status.textContent,'Listening for “Hey FRED”…');
 });
+
+test('head tap-to-speak sends recorded audio through the head voice endpoint', async () => {
+  const toggle = {textContent:'Enable Hey FRED'}, record = {}, status = {}, reply = {};
+  const requests = []; let activeRecorder, stopped = false, spoken;
+  class Recorder {
+    constructor() { activeRecorder = this; this.state = 'inactive'; this.mimeType = 'audio/webm'; }
+    start() { this.state = 'recording'; }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable({data:new Blob(['hello'], {type:this.mimeType})});
+      this.done = this.onstop();
+    }
+  }
+  const context = {
+    document:{getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply, headRecord:record})[name]},
+    window:{MediaRecorder:Recorder, speechSynthesis:{cancel() {}, speak(u) {spoken = u.text; queueMicrotask(() => u.onend());}}},
+    MediaRecorder:Recorder, Blob, Uint8Array, btoa,
+    navigator:{mediaDevices:{getUserMedia:async () => ({getTracks:() => [{stop() {stopped = true;}}]})}},
+    addEventListener() {}, clearTimeout() {}, setTimeout() {},
+    SpeechSynthesisUtterance:class {constructor(text) {this.text = text;}},
+    fetch:async (url, options) => {
+      requests.push({url, options});
+      return {ok:true, json:async () => ({transcript:'hello', reply:'Hi there'})};
+    },
+  };
+  vm.runInNewContext(source, context);
+  await record.onclick();
+  assert.equal(record.textContent, 'Stop speaking');
+  await record.onclick();
+  await activeRecorder.done;
+  const voice = requests.find(request => request.url === '/api/voice');
+  assert.ok(voice);
+  assert.equal(Buffer.from(JSON.parse(voice.options.body).audio, 'base64').toString(), 'hello');
+  assert.equal(reply.textContent, 'Hi there');
+  assert.equal(spoken, 'Hi there');
+  assert.equal(record.textContent, 'Tap to speak');
+  assert.equal(record.disabled, false);
+  assert.equal(stopped, true);
+});

@@ -7,12 +7,24 @@ if (typeof module !== 'undefined') module.exports = {fredWakeCommand};
 if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && !document.getElementById('talkButton')) (() => {
   const toggle = document.getElementById('wakeToggle'), status = document.getElementById('wakeStatus');
   const reply = document.getElementById('wakeReply');
+  const recordButton = document.getElementById('headRecord');
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let enabled = false, recognition, armed = false, words = '', timer, restart, busy = false;
+  let recorder, stream;
   const hardware = state => fetch('/api/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({state})}).catch(() => {});
   function stopListening() {
     clearTimeout(restart); clearTimeout(timer);
     if (recognition) { const old = recognition; recognition = null; old.onend = null; old.abort(); }
+  }
+  function speak(text) {
+    if (!window.speechSynthesis) return Promise.reject(Error('Speech playback is unavailable in this browser'));
+    return new Promise((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      const timeout = setTimeout(() => { window.speechSynthesis.cancel(); reject(Error('Speech playback timed out')); }, 30000);
+      utterance.onend = () => { clearTimeout(timeout); resolve(); };
+      utterance.onerror = () => { clearTimeout(timeout); reject(Error('Speech playback failed')); };
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
+    });
   }
   function listen() {
     if (!enabled || busy || recognition) return;
@@ -34,7 +46,9 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
     current.onerror = event => {
       if (recognition !== current || event.error === 'aborted' || event.error === 'no-speech') return;
       enabled = false; stopListening(); hardware('idle'); toggle.textContent = 'Enable Hey FRED';
-      status.textContent = `Microphone error: ${event.error}. Tap to retry.`;
+      status.textContent = event.error === 'network'
+        ? 'Browser speech recognition is unavailable. Use Tap to speak.'
+        : `Microphone error: ${event.error}. Check permission or use Tap to speak.`;
     };
     current.onend = () => { if (recognition === current) { recognition = null; if (enabled && !busy) restart = setTimeout(listen, 500); } };
     try { current.start(); } catch (error) { enabled = false; recognition = null; status.textContent = `Microphone unavailable: ${error.message}`; }
@@ -48,14 +62,7 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
       const response = await fetch('/api/conversation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message})});
       const data = await response.json(); if (!response.ok) throw Error(data.error || 'Conversation failed.');
       reply.textContent = data.reply; status.textContent = 'FRED is speaking…';
-      if (!window.speechSynthesis) throw Error('Speech playback is unavailable in this browser');
-      await new Promise((resolve, reject) => {
-        const utterance = new SpeechSynthesisUtterance(data.reply);
-        const timeout = setTimeout(() => { window.speechSynthesis.cancel(); reject(Error('Speech playback timed out')); }, 30000);
-        utterance.onend = () => { clearTimeout(timeout); resolve(); };
-        utterance.onerror = () => { clearTimeout(timeout); reject(Error('Speech playback failed')); };
-        window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
-      });
+      await speak(data.reply);
       status.textContent = 'Listening for “Hey FRED”…';
     } catch (error) { status.textContent = `FRED could not respond: ${error.message}`; }
     finally { busy = false; hardware('idle'); if (enabled) restart = setTimeout(listen, 700); }
@@ -65,7 +72,36 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
     if (!Recognition) { status.textContent = 'Speech recognition is unavailable in this browser.'; return; }
     enabled = true; toggle.textContent = 'Turn Hey FRED off'; status.textContent = 'Listening for “Hey FRED”…'; listen();
   };
-  addEventListener('pagehide', () => { enabled = false; stopListening(); });
+  if (recordButton) recordButton.onclick = async () => {
+    if (recorder?.state === 'recording') { recorder.stop(); recordButton.textContent = 'Tap to speak'; recordButton.disabled = true; status.textContent = 'Transcribing…'; return; }
+    if (busy) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { status.textContent = 'Recording is unavailable in this browser.'; return; }
+    enabled = false; stopListening(); toggle.textContent = 'Enable Hey FRED';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const chunks = []; recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop()); stream = null;
+        try {
+          if (!chunks.length) throw Error('No audio was recorded');
+          const blob = new Blob(chunks, {type:recorder.mimeType || 'audio/webm'});
+          const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = '';
+          for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          const response = await fetch('/api/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audio:btoa(binary), content_type:blob.type})});
+          const data = await response.json(); if (!response.ok) throw Error(data.error || 'Transcription failed');
+          reply.textContent = data.reply; status.textContent = `Heard: ${data.transcript}. FRED is speaking…`;
+          await speak(data.reply);
+          status.textContent = 'Tap to speak when ready.';
+        } catch (error) { status.textContent = `Tap to speak failed: ${error.message}`; }
+        finally { busy = false; recordButton.disabled = false; hardware('idle'); }
+      };
+      recorder.onerror = () => { status.textContent = 'Recording failed. Tap to retry.'; };
+      recorder.start(); busy = true; hardware('listening');
+      recordButton.textContent = 'Stop speaking'; status.textContent = 'Listening… tap Stop speaking when done.';
+    } catch (error) { stream?.getTracks().forEach(track => track.stop()); stream = null; status.textContent = `Microphone access failed: ${error.message}`; }
+  };
+  addEventListener('pagehide', () => { enabled = false; stopListening(); if (recorder?.state === 'recording') { recorder.onstop = null; recorder.stop(); } stream?.getTracks().forEach(track => track.stop()); });
 })();
 if (typeof document !== 'undefined') (() => {
   const manual = document.getElementById('talkButton');
