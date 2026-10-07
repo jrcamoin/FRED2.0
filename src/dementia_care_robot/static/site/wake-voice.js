@@ -22,7 +22,7 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
       const utterance = new SpeechSynthesisUtterance(text);
       const timeout = setTimeout(() => { window.speechSynthesis.cancel(); reject(Error('Speech playback timed out')); }, 30000);
       utterance.onend = () => { clearTimeout(timeout); resolve(); };
-      utterance.onerror = () => { clearTimeout(timeout); reject(Error('Speech playback failed')); };
+      utterance.onerror = event => { clearTimeout(timeout); reject(Error(`Speech playback failed (${event.error || 'unknown'})`)); };
       window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
     });
   }
@@ -62,8 +62,8 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
       const response = await fetch('/api/conversation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message})});
       const data = await response.json(); if (!response.ok) throw Error(data.error || 'Conversation failed.');
       reply.textContent = data.reply; status.textContent = 'FRED is speaking…';
-      await speak(data.reply);
-      status.textContent = 'Listening for “Hey FRED”…';
+      try { await speak(data.reply); status.textContent = 'Listening for “Hey FRED”…'; }
+      catch (error) { status.textContent = `Reply shown below; audio unavailable: ${error.message}`; }
     } catch (error) { status.textContent = `FRED could not respond: ${error.message}`; }
     finally { busy = false; hardware('idle'); if (enabled) restart = setTimeout(listen, 700); }
   }
@@ -91,8 +91,8 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
           const response = await fetch('/api/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audio:btoa(binary), content_type:blob.type})});
           const data = await response.json(); if (!response.ok) throw Error(data.error || 'Transcription failed');
           reply.textContent = data.reply; status.textContent = `Heard: ${data.transcript}. FRED is speaking…`;
-          await speak(data.reply);
-          status.textContent = 'Tap to speak when ready.';
+          try { await speak(data.reply); status.textContent = 'Tap to speak when ready.'; }
+          catch (error) { status.textContent = `Reply shown below; audio unavailable: ${error.message}`; }
         } catch (error) { status.textContent = `Tap to speak failed: ${error.message}`; }
         finally { busy = false; recordButton.disabled = false; hardware('idle'); }
       };

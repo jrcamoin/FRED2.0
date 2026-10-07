@@ -68,7 +68,7 @@ Install 64-bit Raspberry Pi OS Desktop on the Raspberry Pi 5 and attach both LCD
 
 ```bash
 sudo apt update
-sudo apt install python3-venv python3-cryptography chromium alsa-utils
+sudo apt install python3-venv python3-cryptography chromium alsa-utils speech-dispatcher speech-dispatcher-espeak-ng
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --no-deps -e .
@@ -87,11 +87,13 @@ python -m unittest discover -s tests -v
 For two Pi-attached LCDs under X11, identify their layout with `xrandr --listmonitors`, then launch one Chromium profile per screen. This example assumes two 1920-pixel-wide screens side by side:
 
 ```bash
-chromium --user-data-dir=/tmp/fred-head --app=http://127.0.0.1:8081/ --window-position=0,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
+chromium --user-data-dir=/tmp/fred-head --enable-speech-dispatcher --app=http://127.0.0.1:8081/ --window-position=0,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
 chromium --user-data-dir=/tmp/fred-body --app=http://127.0.0.1:8080/app --window-position=1920,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
 ```
 
 Adjust the positions to the layout reported by `xrandr`; HDMI connector numbers do not necessarily equal X display numbers. The head is served on port 8081, while the main app stays on port 8080; `--head-port` changes the head port. Both share one robot state. Grant the head profile camera and microphone permission during setup, then tap **Enable Hey FRED** once. Say “Hey Fred” followed by a question. FRED shows and speaks its reply from the head browser. Tap **Show tracking** to see the live camera and a green box around the face FRED follows; tap **Hide tracking** to return to the face. Tracking keeps running while the preview is hidden. If the status says the tracker is unavailable, check camera permission and internet access: Chromium uses its native detector when present and otherwise downloads MediaPipe on first use. Camera frames remain in that browser and are used only for gaze/neck targets. Browser speech recognition requires Chromium support and may use an online provider; check the visible head status if speech or playback fails. Route system audio to the head speakers using Raspberry Pi audio settings or `wpctl`.
+
+Chromium on Linux needs its speech-dispatcher launch flag for browser text-to-speech. If FRED shows a reply but speech playback fails, test `spd-say "Hello from FRED"` in the Pi desktop terminal. If that is silent, check the default output with `wpctl status` and select the head speakers. Close every Chromium window using the head profile before restarting it with `--enable-speech-dispatcher`; a new command may reuse an already running browser without applying a new flag.
 
 If **Enable Hey FRED** reports a speech recognition `network` error despite working Pi internet, use **Tap to speak** on the head display. Tap once to start recording and again to send the question. This uses FRED's configured transcription endpoint instead of Chromium's speech recognition service, so set `ROBOT_LLM_API_KEY` on the Pi and run without `--offline` or `--local-ai`. Audio is sent to the configured transcription provider after the second tap. The wake phrase remains unavailable until Chromium speech recognition works or a local wake engine is added.
 

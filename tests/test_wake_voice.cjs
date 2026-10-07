@@ -119,4 +119,12 @@ test('head tap-to-speak sends recorded audio through the head voice endpoint', a
   assert.equal(record.textContent, 'Tap to speak');
   assert.equal(record.disabled, false);
   assert.equal(stopped, true);
+
+  context.window.speechSynthesis.speak = utterance => utterance.onerror({error:'synthesis-unavailable'});
+  await record.onclick();
+  await record.onclick();
+  await activeRecorder.done;
+  assert.equal(reply.textContent, 'Hi there');
+  assert.match(status.textContent, /audio unavailable: Speech playback failed \(synthesis-unavailable\)/);
+  assert.equal(record.disabled, false);
 });
