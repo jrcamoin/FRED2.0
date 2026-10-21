@@ -304,21 +304,24 @@ def make_handler(app, head_only=False):
 
 def serve(data_dir="data",host="127.0.0.1",port=8080,open_browser=False,certfile=None,keyfile=None,pico_device=None,head_port=8081):
     """Start FRED's HTTP server and the background reminder-delivery loop."""
-    if head_port == port:raise ValueError("Head port must differ from the main port")
+    if head_port is not None and head_port == port:raise ValueError("Head port must differ from the main port")
     app=RobotApplication(Path(data_dir),pico_device);server=ThreadingHTTPServer((host,port),make_handler(app))
-    try:head_server=ThreadingHTTPServer((host,head_port),make_handler(app,head_only=True))
+    try:head_server=ThreadingHTTPServer((host,head_port),make_handler(app,head_only=True)) if head_port is not None else None
     except Exception:server.server_close();raise
     if certfile and keyfile:
         ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(certfile,keyfile)
         server.socket=ctx.wrap_socket(server.socket,server_side=True)
-        head_server.socket=ctx.wrap_socket(head_server.socket,server_side=True)
+        if head_server:head_server.socket=ctx.wrap_socket(head_server.socket,server_side=True)
     stop=threading.Event()
     def loop():
         while not stop.wait(1):app.scheduler.deliver_due()
     threading.Thread(target=loop,daemon=True).start()
-    threading.Thread(target=head_server.serve_forever,kwargs={"poll_interval":.5},daemon=True).start()
+    if head_server:threading.Thread(target=head_server.serve_forever,kwargs={"poll_interval":.5},daemon=True).start()
     if open_browser:threading.Timer(.5,lambda:webbrowser.open(f'{"https" if certfile else "http"}://{host}:{port}')).start()
-    print(f'FRED running at {"https" if certfile else "http"}://{host}:{port}; head at {"https" if certfile else "http"}://{host}:{head_port}')
+    print(f'FRED running at {"https" if certfile else "http"}://{host}:{port}' + (f'; head at {"https" if certfile else "http"}://{host}:{head_port}' if head_server else '; head at /head'))
     try:server.serve_forever(.5)
     except KeyboardInterrupt:pass
-    finally:stop.set();head_server.shutdown();head_server.server_close();server.server_close();app.pico and app.pico.close()
+    finally:
+        stop.set()
+        if head_server:head_server.shutdown();head_server.server_close()
+        server.server_close();app.pico and app.pico.close()
