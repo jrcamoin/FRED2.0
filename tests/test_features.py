@@ -13,7 +13,7 @@ from dementia_care_robot.conversation import ConversationService, OfflineCompani
 from dementia_care_robot.coordinator import CareCoordinator
 from dementia_care_robot.models import AlertDelivery, CareProfile, CaregiverContact, ConversationTurn, FamiliarMedia, Reminder, ReminderStatus, ResponseFeedback, RiskLevel
 from dementia_care_robot.security import DeviceSecrets
-from dementia_care_robot.hardware import PicoBridge, discover_pico_device
+from dementia_care_robot.hardware import PicoBridge, discover_pico_device, _camera_report, _supported_pi_model
 from dementia_care_robot.scheduler import ReminderScheduler
 from dementia_care_robot.storage import SQLiteStore
 from dementia_care_robot.speech import OpenAITranscriber
@@ -31,6 +31,22 @@ class FakeNotifier:
 
 
 class FeatureTests(unittest.TestCase):
+    def test_cm5_model_and_csi_camera_detection(self):
+        self.assertTrue(_supported_pi_model("Raspberry Pi Compute Module 5 Rev 1.0"))
+        self.assertTrue(_supported_pi_model("Raspberry Pi 5 Model B Rev 1.0"))
+        self.assertFalse(_supported_pi_model("Raspberry Pi 4 Model B"))
+        from subprocess import CompletedProcess
+        with patch("dementia_care_robot.hardware.shutil.which", return_value="/usr/bin/rpicam-hello"), patch(
+            "dementia_care_robot.hardware.subprocess.run",
+            return_value=CompletedProcess([], 0, "Available cameras\n0 : imx708 [4608x2592]\n", ""),
+        ):
+            self.assertEqual(_camera_report(), (True, "imx708 [4608x2592]"))
+        with patch("dementia_care_robot.hardware.shutil.which", return_value="/usr/bin/rpicam-hello"), patch(
+            "dementia_care_robot.hardware.subprocess.run",
+            return_value=CompletedProcess([], 0, "Available cameras\n-----------------\n", ""),
+        ):
+            self.assertFalse(_camera_report()[0])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = SQLiteStore(Path(self.temp.name) / "test.db")

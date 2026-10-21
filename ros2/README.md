@@ -45,8 +45,11 @@ with the ROS system ABI before building. If no matching wheel is available,
 build MediaPipe for that platform or use a validated deployment image. Do not
 replace ROS's Python with an unrelated interpreter to force installation.
 
-Run a USB camera ROS driver separately, publishing RGB/BGR images (cv_bridge
-converts supported encodings) with accurate timestamps. Start at 640×480, 30 Hz;
+Run a camera publisher for the selected Raspberry Pi CSI sensor separately,
+publishing RGB/BGR images (cv_bridge converts supported encodings) with
+accurate timestamps. `rpicam-hello --list-cameras` should identify the sensor
+before configuring ROS; a compatible libcamera-to-ROS publisher still needs
+to be selected and validated on the CM5 image. Start at 640×480, 30 Hz;
 use `image_topic:=/your/image_topic` to remap. No images or identity embeddings
 are stored or sent to the browser. Face Landmarker detects visible faces; this
 is not full-body tracking through occlusions or person re-identification.

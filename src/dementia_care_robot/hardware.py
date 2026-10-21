@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -29,18 +30,18 @@ def hardware_report(pico_device: str = "auto") -> list[tuple[str, bool, str]]:
     device = discover_pico_device() if pico_device == "auto" else pico_device
     pico_found = bool(device and Path(device).exists())
     pico_access = bool(pico_found and os.access(device, os.R_OK | os.W_OK))
-    drm_connectors = list(Path("/sys/class/drm").glob("card*-HDMI-A-*/status"))
+    drm_connectors = [path for path in Path("/sys/class/drm").glob("card*-*/status") if "Writeback" not in path.parent.name]
     connected_displays = sum(1 for path in drm_connectors if path.read_text(errors="replace").strip() == "connected")
     display = Path("/dev/fb0").exists() or Path("/dev/dri/card0").exists()
-    cameras = sorted(Path("/dev").glob("video*"))
+    camera_found, camera_detail = _camera_report()
     playback, capture = _command_has_device("aplay"), _command_has_device("arecord")
     checks = [
-        ("Model", "Raspberry Pi 5" in model, model),
+        ("Model", _supported_pi_model(model), model),
         ("Python", sys.version_info >= (3, 11), platform.python_version()),
         ("Pico", pico_found, device or "not found; connect the Pico with a data-capable USB cable"),
         ("Pico access", pico_access, "read/write available" if pico_access else "device not found" if not pico_found else "permission denied; add the service user to dialout"),
-        ("Displays", connected_displays >= 2, f"{connected_displays} connected HDMI displays" if drm_connectors else "DRM connector status unavailable" if display else "no framebuffer or DRM display detected"),
-        ("Camera", bool(cameras), str(cameras[0]) if cameras else "no /dev/video* camera detected"),
+        ("Displays", connected_displays >= 2, f"{connected_displays} connected display outputs" if drm_connectors else "DRM connector status unavailable" if display else "no framebuffer or DRM display detected"),
+        ("Camera", camera_found, camera_detail),
         ("Audio output", playback, "ALSA playback device detected" if playback else "no ALSA playback device detected; run aplay -l"),
         ("Microphone", capture, "ALSA capture device detected" if capture else "no ALSA capture device detected; run arecord -l"),
     ]
@@ -51,6 +52,25 @@ def hardware_report(pico_device: str = "auto") -> list[tuple[str, bool, str]]:
         except (OSError, subprocess.SubprocessError):
             checks.append(("Power", False, "vcgencmd failed"))
     return checks
+
+
+def _supported_pi_model(model: str) -> bool:
+    return "Raspberry Pi 5" in model or "Raspberry Pi Compute Module 5" in model
+
+
+def _camera_report() -> tuple[bool, str]:
+    """Ask the Raspberry Pi camera stack; video nodes alone may be codecs."""
+    if not shutil.which("rpicam-hello"):
+        return False, "rpicam-hello unavailable; install rpicam-apps and run rpicam-hello --list-cameras"
+    try:
+        result = subprocess.run(["rpicam-hello", "--list-cameras"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError) as error:
+        return False, f"camera query failed: {error}"
+    output = result.stdout + result.stderr
+    cameras = re.findall(r"^\s*\d+\s*:\s*([^\n]+)", output, flags=re.MULTILINE)
+    if result.returncode == 0 and cameras:
+        return True, "; ".join(camera.strip() for camera in cameras)
+    return False, "no CSI camera reported by rpicam-hello --list-cameras"
 
 
 def _command_has_device(command: str) -> bool:

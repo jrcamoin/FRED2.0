@@ -4,16 +4,17 @@
 
 | Part | Role |
 |---|---|
-| Raspberry Pi 5 | Runs the Python server, two Chromium windows, camera/audio, storage, and AI integrations |
+| Raspberry Pi Compute Module 5 and I/O board | Runs the Python server, two Chromium windows, CSI camera/audio, storage, and AI integrations |
 | Raspberry Pi Pico / RP2040 | Owns LED timing, neck servo trajectories, and physical switches over USB serial |
-| Head LCD (HDMI-0) | Displays `/head`: expressive face, local camera gaze, and behavior state |
-| Body LCD (HDMI-1) | Displays `/app`: conversation, reminders, photos, and touch controls |
+| Head LCD | Displays `/head`: expressive face, local camera gaze, and behavior state |
+| Body LCD | Displays `/app`: conversation, reminders, photos, and touch controls |
+| Raspberry Pi Camera | CSI camera on the I/O board; detect with `rpicam-hello --list-cameras` |
 | Microphone | Prefer a USB microphone or USB audio adapter connected to the device running the browser |
-| Speakers | Connect to the tablet, HDMI display, USB audio adapter, or Pi analog output |
+| Speakers | Use the head LCD's HDMI audio output or a Pi USB audio adapter |
 | Addressable LED ring | Connect to Pico; shows idle, listening, thinking, speaking, and alert states |
 | Switches | Connect to Pico as HELP and ACTION inputs |
 
-The current voice UI records through the browser. If Chromium runs in kiosk mode on the Pi, it uses the Pi's microphone and speakers. If the page runs on a tablet, it uses the tablet's microphone and speakers. The Pi 3 should call remote transcription and language-model services; it is not a practical target for running Whisper or a modern LLM locally.
+The current voice UI records through the browser. If Chromium runs in kiosk mode on the Pi, it uses the Pi's selected microphone and speakers. If the page runs on a tablet, it uses the tablet's microphone and speakers. HDMI can carry speaker audio to an LCD, but a microphone attached to the LCD needs a separate USB data path back to the Pi. CM5IO has no analog audio jack; use HDMI or USB audio output. See the [CM5 parts and power record](CM5_BUILD.md) before connecting the new regulators or servos.
 
 ## Pico default wiring
 
@@ -24,11 +25,13 @@ The defaults are at the top of `firmware/pico/main.py` and can be changed there.
 | LED ring data | GP16 through a suitable logic-level shifter when the ring is powered at 5 V |
 | HELP switch | GP14 to switch, other switch terminal to GND |
 | ACTION switch | GP15 to switch, other switch terminal to GND |
-| Pan servo signal | GP18 (use a separate servo-rated supply with common ground) |
-| Tilt servo signal | GP19 (use a separate servo-rated supply with common ground) |
+| Pan servo signal | GP18, disabled until the servo and mechanical limits are calibrated |
+| Tilt servo signal | GP19, disabled until the servo and mechanical limits are calibrated |
 | Pi communication | Pico USB data port to a Pi USB port; FRED discovers it automatically |
 
 The switches use internal pull-ups and are active-low. Firmware debounce is included.
+`SERVO_OUTPUT_ENABLED` is `False` in the Pico firmware. Fill every calibration
+field and validate the separate servo supply before enabling PWM output.
 
 Important electrical constraints:
 
@@ -37,7 +40,10 @@ Important electrical constraints:
 - Use an appropriately rated external supply for the ring, sized for its LED count and maximum brightness.
 - Join the Pico ground and LED-supply ground. Never join two positive supply rails.
 - Add the capacitor and data-line resistor recommended by the LED-ring manufacturer.
-- Keep all Pi/Pico GPIO at 3.3 V logic. Never apply 5 V directly to a GPIO input.
+- The official CM5IO can select 1.8 V or 3.3 V GPIO reference. Verify its
+  setting before connecting any GPIO signal. The Pico uses 3.3 V logic; add
+  appropriate level shifting if the carrier is set to 1.8 V. Never apply
+  5 V directly to either GPIO input.
 - Verify polarity and pin labels against the exact board and ring datasheets before applying power.
 
 ## Install the Pico firmware
@@ -64,34 +70,27 @@ Pressing HELP invokes the existing urgent caregiver-notification path. At presen
 
 ## Run on the Pi and LCD
 
-Install 64-bit Raspberry Pi OS Desktop on the Raspberry Pi 5 and attach both LCDs before boot so the desktop detects their layout. Raspberry Pi OS includes Python 3 and the desktop image includes Chromium. See the official [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/os.html).
+Install 64-bit Raspberry Pi OS Desktop on the Compute Module 5 and attach both LCDs before boot so the desktop detects their layout. Raspberry Pi OS includes Python 3 and the desktop image includes Chromium. On the official CM5 I/O board, use its specified 5 V USB-C input; the newly purchased 12 V supply is not a direct input to that board. See the official [Compute Module hardware guide](https://www.raspberrypi.com/documentation/computers/compute-module.html).
 
 ```bash
 sudo apt update
-sudo apt install python3-venv python3-cryptography chromium alsa-utils speech-dispatcher speech-dispatcher-espeak-ng
+sudo apt install python3-venv python3-cryptography chromium alsa-utils pipewire-bin curl speech-dispatcher speech-dispatcher-espeak-ng
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --no-deps -e .
 export ROBOT_LLM_API_KEY="your-key"
 dementia-care-robot hardware-check
-dementia-care-robot web --host 0.0.0.0 --pico auto
+dementia-care-robot web --host 127.0.0.1 --pico auto
 ```
 
-Using Raspberry Pi OS's `python3-cryptography` package avoids compiling Rust-backed cryptography code on the Pi 3. Verify the install before configuring startup:
+Using Raspberry Pi OS's `python3-cryptography` package avoids building that dependency during device setup. Verify the install before configuring startup:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print('cryptography OK')"
 python -m unittest discover -s tests -v
 ```
 
-For two Pi-attached LCDs under X11, identify their layout with `xrandr --listmonitors`, then launch one Chromium profile per screen. This example assumes two 1920-pixel-wide screens side by side:
-
-```bash
-chromium --user-data-dir=/tmp/fred-head --enable-speech-dispatcher --app=http://127.0.0.1:8081/ --window-position=0,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
-chromium --user-data-dir=/tmp/fred-body --app=http://127.0.0.1:8080/app --window-position=1920,0 --start-fullscreen --noerrdialogs --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required &
-```
-
-Adjust the positions to the layout reported by `xrandr`; HDMI connector numbers do not necessarily equal X display numbers. The head is served on port 8081, while the main app stays on port 8080; `--head-port` changes the head port. Both share one robot state. Grant the head profile camera and microphone permission during setup, then tap **Enable Hey FRED** once. Say “Hey Fred” followed by a question. FRED shows and speaks its reply from the head browser. Tap **Show tracking** to see the live camera and a green box around the face FRED follows; tap **Hide tracking** to return to the face. Tracking keeps running while the preview is hidden. If the status says the tracker is unavailable, check camera permission and internet access: Chromium uses its native detector when present and otherwise downloads MediaPipe on first use. Camera frames remain in that browser and are used only for gaze/neck targets. Browser speech recognition requires Chromium support and may use an online provider; check the visible head status if speech or playback fails. Route system audio to the head speakers using Raspberry Pi audio settings or `wpctl`.
+For current Raspberry Pi OS Desktop with labwc, follow the [CM5 two-screen startup guide](../deploy/pi5/README.md). It includes audio routing, window rules for both LCDs, graphical autostart, and a reboot check. The head is served on port 8081, while the main app stays on port 8080; `--head-port` changes the head port. Both share one robot state. First verify the CSI sensor with `rpicam-hello --list-cameras`, then test whether Chromium exposes that sensor to the head page. The current browser tracking uses `getUserMedia`; a camera reported by `rpicam-hello` is not proof that Chromium can capture it. Grant the head profile camera and microphone permission during setup, then tap **Enable Hey FRED** once. Tap **Show tracking** to see the live camera and a green box around the face FRED follows. Browser speech recognition requires Chromium support and may use an online provider; check the visible head status if speech or playback fails.
 
 Chromium on Linux needs its speech-dispatcher launch flag for browser text-to-speech. If FRED shows a reply but speech playback fails, test `spd-say "Hello from FRED"` in the Pi desktop terminal. If that is silent, check the default output with `wpctl status` and select the head speakers. Close every Chromium window using the head profile before restarting it with `--enable-speech-dispatcher`; a new command may reuse an already running browser without applying a new flag.
 

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlencode
 from unittest.mock import patch
 
 from dementia_care_robot.web import RobotApplication, make_handler
@@ -12,6 +13,37 @@ from datetime import UTC, datetime
 
 
 class MessageTests(unittest.TestCase):
+    def test_pi_caregiver_setup_requires_session_and_cannot_reset_password(self):
+        class Socket:
+            def __init__(self, request):
+                self.input, self.output = BytesIO(request), b''
+            def makefile(self, *args): return self.input
+            def sendall(self, data): self.output += data
+
+        def request(handler, method, path, fields=None, cookie=None, origin=None):
+            body = urlencode(fields or {}).encode()
+            headers = f'{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {len(body)}\r\n'
+            if cookie: headers += f'Cookie: {cookie}\r\n'
+            if origin: headers += f'Origin: {origin}\r\n'
+            sock = Socket(headers.encode() + b'\r\n' + body)
+            handler(sock, ('127.0.0.1', 1234), None)
+            return sock.output
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'ROBOT_CAREGIVER_AUTH_ENABLED': '1'}):
+            app = RobotApplication(Path(directory))
+            handler = make_handler(app)
+            self.assertIn(b'Set up FRED', request(handler, 'GET', '/caregiver'))
+            created = request(handler, 'POST', '/onboarding', {'step': 1, 'password': 'strong-password', 'confirm': 'strong-password'})
+            self.assertIn(b'200 OK', created)
+            cookie = created.split(b'Set-Cookie: ', 1)[1].split(b';', 1)[0].decode()
+            self.assertIn(b'HTTP/1.0 403 ', request(handler, 'POST', '/onboarding', {'step': 1, 'password': 'other-password', 'confirm': 'other-password'}))
+            self.assertIn(b'HTTP/1.0 403 ', request(handler, 'POST', '/onboarding', {'step': 2, 'quiet_start': '21:00', 'quiet_end': '07:00'}))
+            self.assertIn(b'200 OK', request(handler, 'POST', '/onboarding', {'step': 2, 'quiet_start': '21:00', 'quiet_end': '07:00'}, cookie))
+            self.assertIn(b'Caregiver sign in', request(handler, 'GET', '/caregiver'))
+            self.assertIn(b'Add reminder', request(handler, 'GET', '/caregiver', cookie=cookie))
+            self.assertIn(b'401 Unauthorized', request(handler, 'POST', '/reminders', {'message': 'Drink water'}))
+            self.assertIn(b'HTTP/1.0 403 ', request(handler, 'POST', '/reminders', {'message': 'Drink water'}, cookie, 'https://untrusted.example'))
+
     def test_resident_can_clear_conversation(self):
         class Socket:
             def __init__(self, request):

@@ -87,7 +87,7 @@ async function start() {
     status.textContent = 'Camera on. Loading face tracker…';
     await loadDetector();
     if (!stopped) tick();
-  } catch (error) { status.textContent = `Tracking unavailable: ${error.message}. Check camera permission and internet access for MediaPipe.`; }
+  } catch (error) { status.textContent = `Tracking unavailable: ${error.message}. Check camera permission and model-download network access; on CM5, verify the CSI sensor with rpicam-hello and confirm Chromium can open it.`; }
 }
 
 if (mode === 'ros') {

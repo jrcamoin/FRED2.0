@@ -11,8 +11,9 @@ SupplementaryGroups=dialout video audio
 WorkingDirectory=/opt/fred
 Environment=PYTHONUNBUFFERED=1
 Environment=ROBOT_PICO_DEVICE=auto
+Environment=ROBOT_CAREGIVER_AUTH_ENABLED=1
 EnvironmentFile=-/opt/fred/.env
-ExecStart=/opt/fred/.venv/bin/dementia-care-robot web --host 0.0.0.0 --port 8080 --data-dir /var/lib/fred --pico ${ROBOT_PICO_DEVICE}
+ExecStart=/opt/fred/.venv/bin/dementia-care-robot web --host 127.0.0.1 --port 8080 --data-dir /var/lib/fred --pico ${ROBOT_PICO_DEVICE}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

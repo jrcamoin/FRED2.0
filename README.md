@@ -1,7 +1,5 @@
 # Dementia Care Robot
 
-** pi password - pidementiarobot
-
 An early, safety-first software foundation for an assistive robot supporting people living with dementia and their caregivers.
 
 This repository now provides a working, hardware-neutral Python prototype for:
@@ -18,7 +16,7 @@ It is **not a medical device or emergency service**. It must not diagnose, recom
 
 ## Caregiver setup and Raspberry Pi deployment
 
-Open `/caregiver` to schedule reminders, upload familiar media, and configure contacts. Caregiver authentication is temporarily disabled for local prototyping; the preserved onboarding, login, and session code can be restored by setting `CAREGIVER_AUTH_ENABLED = True` in `web.py`.
+Open `/caregiver` to schedule reminders, upload familiar media, and configure contacts. The Pi service enables caregiver authentication with `ROBOT_CAREGIVER_AUTH_ENABLED=1`. Local development remains in prototype mode unless that setting is enabled. Complete caregiver onboarding before adding private information.
 
 Personal profile text, conversations, contact destinations, reminder messages, photos, and voice notes are encrypted at rest using a device key stored at `data/.device-key` with owner-only permissions. Back up that key separately: encrypted data cannot be recovered without it. For production, also enable Raspberry Pi OS full-disk encryption, HTTPS, firewalling, automatic security updates, and physical protection of the SD card.
 
@@ -43,7 +41,10 @@ The two-screen Raspberry Pi build uses `/head` on the head LCD and `/app` on
 the body touchscreen. Both are served by the same process and share one robot
 state, so listening, thinking, speaking, alert expressions, camera gaze, LED
 state, and RP2040 neck motion stay synchronized. See
-[docs/HARDWARE.md](docs/HARDWARE.md) for wiring and dual-kiosk launch commands.
+[docs/HARDWARE.md](docs/HARDWARE.md) for wiring and
+[the Pi 5 startup guide](deploy/pi5/README.md) for audio checks and dual-screen boot.
+The [Compute Module 5 build record](docs/CM5_BUILD.md) tracks the new camera,
+power regulators, servos, connectors, and mechanical parts.
 
 For ROS 2 person tracking, see [ros2/README.md](ros2/README.md). The separate
 `fred_hri` package provides MediaPipe perception, neck PID coordination and a
@@ -187,13 +188,13 @@ dementia-care-robot export-feedback --data-dir data --output private-feedback.js
 
 The command creates the file with owner-only permissions. Review and de-identify it before moving it off the device or using it with an external service.
 
-For the Raspberry Pi 3 Model B v1.2 + Pico + LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Check attached devices with `dementia-care-robot hardware-check`, then start the bridge with `--pico auto`.
+For the Raspberry Pi 5 + Pico + two LCD + microphone + speakers + LED-ring build, see [docs/HARDWARE.md](docs/HARDWARE.md). Check attached devices with `dementia-care-robot hardware-check`, then start the bridge with `--pico auto`.
 
 ## Current prototype limitations
 
 - Spoken conversation responses use the browser's installed voice. Configured SMS and push-webhook alerts still require end-to-end testing and are not an emergency service.
 - Photo URLs may disclose the viewer's IP to the image host. Local upload/copy support is the next privacy milestone.
-- Both resident and caregiver pages are temporarily unauthenticated for local prototyping. Do not expose the server to a public or untrusted network.
+- The resident page is available without sign-in. The Pi service requires caregiver sign-in, while a manually started development server does not unless `ROBOT_CAREGIVER_AUTH_ENABLED=1` is set. Do not expose either server to a public or untrusted network.
 - Reminder times use the device's local timezone at entry.
 - Sensitive SQLite fields and uploaded media are encrypted, but metadata and database structure are visible. Do not treat this as a substitute for full-disk encryption.
 

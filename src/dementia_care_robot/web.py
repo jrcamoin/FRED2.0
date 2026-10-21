@@ -25,9 +25,9 @@ from .website import landing_page, fred_page, public_asset
 
 CSS="""*{box-sizing:border-box}body{margin:0;background:#f1f5f7;color:#193247;font:17px/1.5 system-ui,sans-serif}header{background:#16344d;color:white;padding:18px 5vw;display:flex;justify-content:space-between;align-items:center}header a{color:white}main{max-width:1100px;margin:24px auto;padding:0 18px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}.card{background:white;border:1px solid #d8e2e7;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 4px 18px #16344d0d}h1,h2,h3{margin-top:0}button,.button{border:0;border-radius:12px;background:#14766e;color:white;font-weight:750;padding:13px 18px;min-height:48px;cursor:pointer;text-decoration:none;display:inline-block}button.danger{background:#a3342c}input,select,textarea{width:100%;padding:11px;border:1px solid #aebec8;border-radius:9px;font:inherit;margin:5px 0 12px}label{font-weight:700}.muted{color:#607484;font-size:.88rem}.notice{background:#fff3ca;border-left:5px solid #dfaa2b;padding:12px;margin-bottom:18px}.status{display:inline-block;border-radius:99px;background:#e6f4f1;padding:4px 10px}.reminder{border-top:1px solid #dce5e9;padding:14px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.gallery img{width:100%;height:150px;object-fit:cover;border-radius:10px}.chat{height:300px;overflow:auto;background:#f7fafb;padding:12px;border-radius:12px}.turn{margin:8px;padding:10px;background:#e7f1f6;border-radius:10px}.turn.user{background:#173a56;color:white;margin-left:20%}.talk{font-size:1.15rem;width:100%;background:#bd443b}.actions{display:flex;gap:10px;flex-wrap:wrap}.metric{font-size:2rem;font-weight:800}.steps{display:flex;gap:8px;margin-bottom:18px}.steps span{background:#e4ecef;padding:6px 11px;border-radius:99px}.steps .active{background:#14766e;color:white}@media(max-width:760px){.grid{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start;gap:10px}.actions{flex-direction:column}}"""
 
-# Temporary prototype setting. Change to True to restore the preserved
-# caregiver onboarding, login, session cookie, and POST-route protection.
-CAREGIVER_AUTH_ENABLED = False
+def caregiver_auth_enabled():
+    """Require caregiver sign-in on deployed devices."""
+    return os.environ.get("ROBOT_CAREGIVER_AUTH_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 def _layout(title, body, caregiver=False):
     links = '<a href="/">Human Frame Robotics ↗</a><a href="/fred">Meet FRED</a>'
@@ -179,8 +179,13 @@ def make_handler(app, head_only=False):
         c=SimpleCookie(self.headers.get("Cookie","")); return "fred_session" in c and app.secrets.valid_session(c["fred_session"].value)
     def redirect(self,path,notice=""):
         self.send_response(303); self.send_header("Location",path+("?notice="+quote(notice) if notice else "")); self.end_headers()
-    def send(self,body,status=200,kind="text/html; charset=utf-8"):
-        self.send_response(status); self.send_header("Content-Type",kind); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
+    def send(self,body,status=200,kind="text/html; charset=utf-8",headers=None):
+        self.send_response(status); self.send_header("Content-Type",kind); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store")
+        for key,value in (headers or {}).items():self.send_header(key,value)
+        self.end_headers(); self.wfile.write(body)
+    def session_cookie(self):
+        secure="; Secure" if isinstance(self.connection,ssl.SSLSocket) else ""
+        return f"fred_session={app.secrets.issue_session()}; HttpOnly; SameSite=Strict; Path=/{secure}"
     def json(self,payload,status=200):self.send(json.dumps(payload).encode(),status,"application/json")
     def form(self,limit=20000):
         length=int(self.headers.get("Content-Length","0"));
@@ -204,8 +209,8 @@ def make_handler(app, head_only=False):
             self.send_error(404);return
         if p.path in {"/app", "/app/"}:app.scheduler.deliver_due();self.send(_page(app,notice));return
         if p.path=="/caregiver":
-            if CAREGIVER_AUTH_ENABLED and not app.store.configured():self.send(_onboarding());return
-            self.send(_caregiver(app,notice) if not CAREGIVER_AUTH_ENABLED or self.auth() else _login(notice));return
+            if caregiver_auth_enabled() and not app.store.configured():self.send(_onboarding());return
+            self.send(_caregiver(app,notice) if not caregiver_auth_enabled() or self.auth() else _login(notice));return
         if p.path.startswith("/local-media/"):
             path=app.media_dir/(Path(p.path).name+".enc")
             if path.is_file():
@@ -215,8 +220,12 @@ def make_handler(app, head_only=False):
         self.send_error(404)
     def do_POST(self):
         # Public resident actions are handled before the caregiver auth gate.
-        # Caregiver mutations below the gate are temporarily open while
-        # CAREGIVER_AUTH_ENABLED is False during local prototyping.
+        # Caregiver mutations below the gate require a session on deployed devices.
+        origin=self.headers.get("Origin")
+        if origin and origin not in {f"http://{self.headers.get('Host')}",f"https://{self.headers.get('Host')}"}:
+            self.send_error(403,"Cross-origin request blocked");return
+        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            self.send_error(403,"Cross-site request blocked");return
         p=urlparse(self.path).path; length=int(self.headers.get("Content-Length","0"))
         if head_only and p not in {"/api/conversation", "/api/status", "/api/neck", "/api/voice"}:
             self.send_error(404);return
@@ -262,16 +271,19 @@ def make_handler(app, head_only=False):
             try:
                 f=self.form();step=int(f["step"])
                 if step==1:
+                    if app.store.configured():self.send_error(403,"Caregiver password already configured");return
                     if len(f.get("password",""))<10 or f["password"]!=f.get("confirm"):raise ValueError("Passwords must match and contain at least 10 characters.")
-                    app.store.set_setting("caregiver_password_hash",DeviceSecrets.hash_password(f["password"]));self.send(_onboarding(2));return
+                    app.store.set_setting("caregiver_password_hash",DeviceSecrets.hash_password(f["password"]));self.send(_onboarding(2),headers={"Set-Cookie":self.session_cookie()});return
+                if not self.auth():self.send_error(403,"Sign in to finish setup");return
                 if step==2:app.store.set_setting("quiet_start",f["quiet_start"]);app.store.set_setting("quiet_end",f["quiet_end"]);self.send(_onboarding(3));return
                 if step==3:app.store.add_contact(CaregiverContact(uuid.uuid4().hex,f["name"],f["channel"],f["destination"]));self.redirect("/caregiver","Setup complete. Sign in.");return
             except (KeyError,ValueError) as e:self.send(_onboarding(max(1,min(3,int(locals().get('step',1)))),str(e)),400);return
         if p=="/login":
+            if not app.store.configured():self.redirect("/caregiver");return
             f=self.form(); stored=app.store.setting("caregiver_password_hash")
             if not DeviceSecrets.verify_password(f.get("password",""),stored):self.send(_login("Incorrect password."),401);return
-            self.send_response(303);self.send_header("Location","/caregiver");self.send_header("Set-Cookie",f"fred_session={app.secrets.issue_session()}; HttpOnly; SameSite=Strict; Path=/");self.end_headers();return
-        if CAREGIVER_AUTH_ENABLED and not self.auth():self.send(_login("Please sign in."),401);return
+            self.send_response(303);self.send_header("Location","/caregiver");self.send_header("Set-Cookie",self.session_cookie());self.end_headers();return
+        if caregiver_auth_enabled() and not self.auth():self.send(_login("Please sign in."),401);return
         try:
             if p=="/reminders":
                 f=self.form(); local=datetime.fromisoformat(f["due_at"]).astimezone(); rec=f.get("recurrence","none")
