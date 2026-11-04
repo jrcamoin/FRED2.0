@@ -29,11 +29,12 @@ def caregiver_auth_enabled():
     """Require caregiver sign-in on deployed devices."""
     return os.environ.get("ROBOT_CAREGIVER_AUTH_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
-def _layout(title, body, caregiver=False):
+def _layout(title, body, caregiver=False, activities=False):
     links = '<a href="/">Human Frame Robotics ↗</a><a href="/fred">Meet FRED</a>'
-    links += f'<a href="/app" {"aria-current=page" if not caregiver else ""}>Companion</a>'
+    links += f'<a href="/app" {"aria-current=page" if not caregiver and not activities else ""}>Companion</a>'
+    links += f'<a href="/activities" {"aria-current=page" if activities else ""}>Activities</a>'
     links += f'<a href="/caregiver" {"aria-current=page" if caregiver else ""}>Caregiver</a>'
-    mode = "Caregiver workspace" if caregiver else "Your companion space"
+    mode = "Caregiver workspace" if caregiver else "Activities with FRED" if activities else "Your companion space"
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#263f36"><title>{html.escape(title)} · Human Frame Robotics</title><style>{CSS}</style><link rel="stylesheet" href="/static/site/app.css"></head><body class="{'caregiver' if caregiver else 'resident'}"><a class="skip-link" href="#main">Skip to content</a><header><a class="app-brand" href="/app"><span class="fred-icon" aria-hidden="true">••</span><span>FRED<small>by Human Frame Robotics</small></span></a><nav class="actions" aria-label="App navigation">{links}</nav></header><main id="main"><div class="workspace-label"><span>{mode}</span><span>Local prototype</span></div>{body}</main><footer class="app-footer"><span>Human Frame Robotics · Thoughtfully connected.</span><a href="/fred">About FRED</a></footer></body></html>'''.encode()
 
 class RobotApplication:
@@ -102,8 +103,30 @@ def _page(app,notice=""):
     notice_html=f'<div class=notice>{html.escape(notice)}</div>' if notice else ''
     voice_hint='You can also type below.' if app.server_transcription else 'Press Start speaking, or type a message below.'
     body=f'{notice_html}{reminder}<div class="grid"><section class="card"><div class="companion-heading"><span class="fred-icon" aria-hidden="true">••</span><div><p class="eyebrow">A moment together</p><h1>Hello. I’m FRED,<br>your robot helper.</h1></div></div><button class="talk" id="talkButton" data-server-transcription="{str(app.server_transcription).lower()}">Start speaking</button><p id="voiceStatus" class="muted" role="status">{voice_hint}</p><div class="chat" id="chat" role="log" aria-label="Conversation with FRED" aria-live="polite">{chat}</div><form id="messageForm"><label class="sr-only" for="messageInput">Your message to FRED</label><input id="messageInput" required maxlength="2000" placeholder="Ask FRED something"><button>Send message →</button></form><form class="clear-form" method="post" action="/conversation/clear" onsubmit="return confirm(\'Clear this conversation from FRED?\')"><button class="danger">Clear conversation</button></form></section><aside><section class="card"><h2>Familiar photos</h2><div class="gallery">{gallery}</div></section><section class="card"><h2>Need a person?</h2><p>Press the physical HELP button on FRED.</p></section></aside></div><script>{_resident_js()}</script>'
-    body += '<script src="/static/site/wake-voice.js" defer></script><p><a href="/test">Camera and hands-free laptop test</a></p>'
+    body += '<script src="/static/site/wake-voice.js" defer></script><p><a class="button" href="/activities">Play and learn together →</a></p><p><a href="/test">Camera and hands-free laptop test</a></p>'
     return _layout("FRED",body)
+
+def _activities_page(app):
+    """Offer optional, low-pressure activities without recording answers."""
+    photos = [m for m in app.store.list_media() if m.kind == "image"]
+    music = [m for m in app.store.list_media() if m.kind == "music"]
+    photo_cards = ''.join(
+        f'<figure><img src="{html.escape(m.uri, quote=True)}" alt="{html.escape(m.description or m.title, quote=True)}"><figcaption>{html.escape(m.title)}</figcaption><button type="button" class="photo-prompt">Talk about this photo</button><p class="photo-question" role="status" hidden></p></figure>'
+        for m in photos
+    ) or '<p class="muted">No familiar photos yet. A caregiver can add some in the caregiver space.</p>'
+    music_tracks = ''.join(
+        f'<button type="button" class="music-track" data-src="{html.escape(m.uri, quote=True)}" data-title="{html.escape(m.title, quote=True)}">{html.escape(m.title)}</button>'
+        for m in music
+    ) or '<p class="muted">No music has been added yet. A caregiver can upload a favorite song or recording in the caregiver space.</p>'
+    body = f'''<div class="activities-heading"><p class="eyebrow">A little time together</p><h1>Play, discover, and remember</h1><p>Choose what feels enjoyable today. There is no timer or score, and you can stop at any time.</p></div>
+    <div id="activity-chooser"><h2>What sounds good today?</h2><div class="activity-choices" role="group" aria-label="Choose an activity"><button type="button" data-activity="music">♫ Favorite music</button><button type="button" data-activity="pairs">◈ Find a pair</button><button type="button" data-activity="phrases">✎ Finish a phrase</button><button type="button" data-activity="puzzle">▦ Photo puzzle</button><button type="button" data-activity="color">✿ Color a picture</button><button type="button" data-activity="sort">▣ Help FRED sort</button><button type="button" data-activity="learn">☼ Explore and learn</button><button type="button" data-activity="photos">♡ Familiar photos</button><button type="button" data-activity="pause">○ Quiet moment</button></div></div>
+    <button type="button" id="activities-back" hidden>← All activities</button>
+    <section class="card activity-panel" id="music-panel" aria-labelledby="music-title" hidden><h2 id="music-title">Favorite music</h2><p>Choose a familiar song or recording. Listen, sing along, or simply enjoy it together.</p><div class="music-list" aria-label="Favorite music">{music_tracks}</div><p id="music-now-playing" role="status" aria-live="polite">Choose a track to begin.</p><audio id="music-player" controls preload="none" aria-label="Favorite music player"></audio><button type="button" id="music-introduce" hidden>Hear FRED introduce this song</button><p class="muted">Does this song bring a place, person, or moment to mind? It is fine just to listen.</p></section>
+    <section class="card activity-panel" id="activity-panel" aria-labelledby="activity-title" hidden><h2 id="activity-title">Find a pair</h2><p id="activity-instructions">Tap two cards to find pictures that match.</p><div id="activity-content"></div><p id="activity-feedback" role="status" aria-live="polite"></p><button type="button" id="activity-next">New round</button></section>
+    <section class="card activity-panel" id="familiar-photos" hidden><h2>Familiar photos</h2><p>Take your time looking together.</p><div class="gallery">{photo_cards}</div><p class="muted">It is okay if a memory does not come to mind. You can simply enjoy the photo.</p></section>
+    <div id="puzzle-photos" hidden>{''.join(f'<img src="{html.escape(m.uri, quote=True)}" alt="{html.escape(m.description or m.title, quote=True)}">' for m in photos)}</div>
+    <p><a href="/app">← Back to FRED</a></p><script src="/static/site/activities.js" defer></script>'''
+    return _layout("Activities", body, activities=True)
 
 def _head_page():
     """Fullscreen expressive face for the head LCD; camera processing stays local."""
@@ -172,7 +195,8 @@ record.onclick=async()=>{
     finally{record.disabled=false;}
 };
 </script>'''
-    body=body.replace('<h2>Upload family media</h2>','<h2>Upload family media</h2><label>Voice-note title<input id="voiceTitle" maxlength="120"></label><button type="button" id="recordVoice">Record a family voice note</button><p id="recordingStatus" role="status" class="muted">Or upload an existing photo or voice note below.</p>')+recorder
+    body=body.replace('<h2>Upload family media</h2>','<h2>Upload family media</h2><label>Voice-note title<input id="voiceTitle" maxlength="120"></label><button type="button" id="recordVoice">Record a family voice note</button><p id="recordingStatus" role="status" class="muted">Or upload an existing photo, voice note, or favorite music file below.</p>')
+    body=body.replace('<label>Photo or voice note<input', '<label>Use for<select name="purpose"><option value="media">Family photo or reminder voice note</option><option value="music">Favorite music in Activities</option></select></label><p class="muted">Choose an audio file you have permission to use. Files must be under 12 MB.</p><label>Photo, voice note, or music file<input')+recorder
     return _layout("Caregiver dashboard",body,True)
 
 def _multipart(handler,length):
@@ -220,6 +244,7 @@ def make_handler(app, head_only=False):
             if asset is not None:self.send(asset,kind=mimetypes.guess_type(p.path)[0] or "application/octet-stream");return
             self.send_error(404);return
         if p.path in {"/app", "/app/"}:app.scheduler.deliver_due();self.send(_page(app,notice));return
+        if p.path in {"/activities", "/activities/"}:self.send(_activities_page(app));return
         if p.path=="/caregiver":
             if caregiver_auth_enabled() and not app.store.configured():self.send(_onboarding());return
             self.send(_caregiver(app,notice) if not caregiver_auth_enabled() or self.auth() else _login(notice));return
@@ -317,7 +342,9 @@ def make_handler(app, head_only=False):
                 if length>12_000_000:raise ValueError("File is larger than 12 MB.")
                 f=_multipart(self,length); filename,kind,data=f["file"]; allowed={"image/jpeg":"jpg","image/png":"png","image/webp":"webp","audio/webm":"webm","audio/mpeg":"mp3","audio/wav":"wav"}
                 if kind not in allowed or not data:raise ValueError("Choose a supported photo or audio file.")
-                ident=uuid.uuid4().hex; name=f"{ident}.{allowed[kind]}";(app.media_dir/(name+".enc")).write_bytes(app.secrets.encrypt_bytes(data)); media_kind="audio" if kind.startswith("audio/") else "image";app.store.add_media(FamiliarMedia(ident,str(f["title"])[:120],"/local-media/"+name,media_kind,str(f.get("description",""))[:300]));self.redirect("/caregiver","Family media encrypted and uploaded.");return
+                purpose=f.get("purpose","media")
+                if purpose not in {"media","music"} or (purpose=="music" and not kind.startswith("audio/")):raise ValueError("Favorite music must be an audio file.")
+                ident=uuid.uuid4().hex; name=f"{ident}.{allowed[kind]}";(app.media_dir/(name+".enc")).write_bytes(app.secrets.encrypt_bytes(data)); media_kind="music" if purpose=="music" else "audio" if kind.startswith("audio/") else "image";app.store.add_media(FamiliarMedia(ident,str(f["title"])[:120],"/local-media/"+name,media_kind,str(f.get("description",""))[:300]));self.redirect("/caregiver","Family media encrypted and uploaded.");return
             if p=="/data/delete":
                 for path in app.media_dir.glob("*.enc"):path.unlink()
                 app.store.delete_personal_data();self.redirect("/caregiver","Personal data deleted.");return

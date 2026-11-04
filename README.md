@@ -37,6 +37,16 @@ directly into this server's robot app. Future customer accounts will need
 purchase verification and a mapping from each customer to their own device;
 the existing caregiver password is not a customer account system.
 
+The companion navigation also opens `/activities`. Its large activity choices
+lead to one task at a time: favorite music, picture matching with two to four
+pairs, familiar phrase completion, a four-piece family-photo puzzle, tap-to-color
+art, a simple household sorting task, short everyday facts, photo conversation
+prompts, and a quiet moment. Every task is untimed and can be left at any point.
+Music and photos are added in `/caregiver`; choose **Favorite music in
+Activities** when uploading an audio file. Playback starts only when a track
+is selected and pauses when switching activities. Activities work offline and
+do not record answers or scores. The puzzle uses a caregiver-uploaded photo.
+
 The two-screen Raspberry Pi build uses `/head` on the head LCD and `/app` on
 the body touchscreen. Both are served by the same process and share one robot
 state, so listening, thinking, speaking, alert expressions, camera gaze, LED
