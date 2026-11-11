@@ -15,13 +15,22 @@ toggle.onclick = () => {
 };
 
 function gaze(u = 0, v = 0) {
-  face.style.setProperty('--gx', `${u * 30}px`);
-  face.style.setProperty('--gy', `${v * 20}px`);
+  displayGaze(u, v);
   if (Date.now() - lastNeck > 350) {
     lastNeck = Date.now();
     fetch('/api/neck', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({pan: u * 55, tilt: v * 24, speed: 70})}).catch(() => {});
   }
+}
+
+function displayGaze(u = 0, v = 0) {
+  // Boost small camera offsets for a clearly visible display response.
+  const x = Math.max(-1, Math.min(1, u * 1.8));
+  const y = Math.max(-1, Math.min(1, v * 1.8));
+  face.style.setProperty('--gx', `${x * 22}px`);
+  face.style.setProperty('--gy', `${y * 14}px`);
+  face.style.setProperty('--px', `${x * 80}%`);
+  face.style.setProperty('--py', `${y * 65}%`);
 }
 
 async function loadDetector() {
@@ -62,7 +71,8 @@ async function tick() {
       });
       if (detected.length) {
         const box = detected[0];
-        const u = Math.max(-1, Math.min(1, 2 * (box.x + box.width / 2) / canvas.width - 1));
+        // A front-facing camera reverses the viewer's left and right.
+        const u = Math.max(-1, Math.min(1, 1 - 2 * (box.x + box.width / 2) / canvas.width));
         const v = Math.max(-1, Math.min(1, 2 * (box.y + box.height / 2) / canvas.height - 1));
         gaze(u, v); status.textContent = `Tracking ${detected.length} face${detected.length === 1 ? '' : 's'}.`;
       } else { gaze(); status.textContent = 'Camera on. No face detected.'; }
@@ -75,7 +85,7 @@ function stop() {
   stopped = true; clearTimeout(timer);
   stream?.getTracks().forEach(track => track.stop());
   video.srcObject = null; detector?.close?.();
-  face.style.setProperty('--gx', '0px'); face.style.setProperty('--gy', '0px');
+  displayGaze();
 }
 
 async function start() {
@@ -102,9 +112,8 @@ if (mode === 'ros') {
     const {u, v} = event.data;
     if (!Number.isFinite(u) || !Number.isFinite(v)) return;
     lastGaze = performance.now();
-    face.style.setProperty('--gx', `${Math.max(-1, Math.min(1, u)) * 30}px`);
-    face.style.setProperty('--gy', `${Math.max(-1, Math.min(1, v)) * 20}px`);
+    displayGaze(u, v);
   });
-  setInterval(() => { if (performance.now() - lastGaze > 600) { face.style.setProperty('--gx', '0px'); face.style.setProperty('--gy', '0px'); } }, 200);
+  setInterval(() => { if (performance.now() - lastGaze > 600) displayGaze(); }, 200);
 } else start();
 addEventListener('pagehide', stop);

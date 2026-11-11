@@ -6,6 +6,8 @@
   function center() {
     face.style.setProperty('--gx', '0px');
     face.style.setProperty('--gy', '0px');
+    face.style.setProperty('--px', '0%');
+    face.style.setProperty('--py', '0%');
   }
   function connect() {
     socket = new WebSocket(`ws://${location.hostname}:8765`);
@@ -16,8 +18,12 @@
             !Number.isFinite(data.u) || !Number.isFinite(data.v) ||
             Math.abs(data.u) > 1 || Math.abs(data.v) > 1) return;
         lastMessage = performance.now();
-        face.style.setProperty('--gx', `${data.u * 30}px`);
-        face.style.setProperty('--gy', `${data.v * 20}px`);
+        const x = Math.max(-1, Math.min(1, data.u * 1.8));
+        const y = Math.max(-1, Math.min(1, data.v * 1.8));
+        face.style.setProperty('--gx', `${x * 22}px`);
+        face.style.setProperty('--gy', `${y * 14}px`);
+        face.style.setProperty('--px', `${x * 80}%`);
+        face.style.setProperty('--py', `${y * 65}%`);
       } catch (_) { /* Ignore malformed messages without breaking animation. */ }
     };
     socket.onclose = () => { center(); reconnect = setTimeout(connect, 1000); };

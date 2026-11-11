@@ -137,13 +137,14 @@ MediaPipe face detection, not the ROS Face Landmarker/PID pipeline, and never
 sends physical neck commands. Camera video stays in the browser; initial
 library/model downloads require internet access.
 
-In the companion panel (also available directly at `/app`), click
-**Enable hands-free · Hey FRED** once and allow microphone access. Say
+In the companion panel (also available directly at `/app`) and the head display,
+**Hey FRED** starts automatically. Allow microphone access when prompted. If the
+browser requires a click, use the start control (under **Voice settings** on the head). Say
 “Hey FRED, how are you?” or “Hey FRED”, then ask your question. A short pause
 submits the request; FRED speaks the reply and resumes waiting for its name.
 The microphone recognizer pauses during playback to avoid hearing its own
 reply. Turn hands-free off to return to typing/manual recording. Hiding the
-page pauses camera and hands-free mode.
+page pauses camera and hands-free mode; wake listening resumes when you return.
 
 This laptop mode uses browser speech recognition to recognize the wake name;
 it is not a dedicated offline wake-word model. The browser may send continuous

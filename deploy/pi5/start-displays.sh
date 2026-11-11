@@ -18,7 +18,8 @@ mkdir -p "$PROFILE_ROOT/head" "$PROFILE_ROOT/body"
 
 while :; do
     "$CHROMIUM" --user-data-dir="$PROFILE_ROOT/head" \
-        --enable-speech-dispatcher --no-first-run --noerrdialogs \
+        --enable-speech-dispatcher --autoplay-policy=no-user-gesture-required \
+        --no-first-run --noerrdialogs \
         --disable-session-crashed-bubble --app=http://127.0.0.1:8081/
     sleep 3
 done &

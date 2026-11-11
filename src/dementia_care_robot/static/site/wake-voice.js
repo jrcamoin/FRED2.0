@@ -1,9 +1,31 @@
+// Speech APIs do not expose gender; match known voice names and allow an explicit choice.
+function fredChooseVoice(voices, gender, language, voiceURI) {
+  const exact = voices.find(voice => voice.voiceURI === voiceURI);
+  if (exact) return exact;
+  const names = gender === 'female'
+    ? /\b(samantha|victoria|karen|moira|tessa|fiona|zira|susan|hazel|jenny|aria|sonia|female)\b/i
+    : /\b(daniel|alex|fred|tom|oliver|arthur|david|mark|george|james|guy|ryan|male)\b/i;
+  const lang = (language || 'en-US').toLowerCase();
+  const matching = voices.filter(voice => names.test(voice.name));
+  return matching.find(voice => voice.lang.toLowerCase() === lang)
+    || matching.find(voice => voice.lang.toLowerCase().split('-')[0] === lang.split('-')[0])
+    || null;
+}
+if (typeof window !== 'undefined') {
+  window.fredApplyVoice = utterance => {
+    let gender = 'male', voiceURI = '';
+    try { gender = localStorage.getItem('fredVoiceGender') || 'male'; voiceURI = localStorage.getItem('fredVoiceURI') || ''; } catch (_) {}
+    const voice = fredChooseVoice(window.speechSynthesis?.getVoices?.() || [], gender, navigator.language, voiceURI);
+    if (voice) { utterance.voice = voice; utterance.lang = voice.lang; }
+    return utterance;
+  };
+}
 // Browser speech recognition prototype; not an offline keyword engine.
 function fredWakeCommand(text) {
   const match = /\b(?:hey\s+)?fred\b[\s,.!?:;-]*/i.exec(text);
   return match ? text.slice(match.index + match[0].length).trim() : null;
 }
-if (typeof module !== 'undefined') module.exports = {fredWakeCommand};
+if (typeof module !== 'undefined') module.exports = {fredWakeCommand, fredChooseVoice};
 if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && !document.getElementById('talkButton')) (() => {
   const toggle = document.getElementById('wakeToggle'), status = document.getElementById('wakeStatus');
   const reply = document.getElementById('wakeReply');
@@ -19,7 +41,7 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
   function speak(text) {
     if (!window.speechSynthesis) return Promise.reject(Error('Speech playback is unavailable in this browser'));
     return new Promise((resolve, reject) => {
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance = window.fredApplyVoice(new SpeechSynthesisUtterance(text));
       const timeout = setTimeout(() => { window.speechSynthesis.cancel(); reject(Error('Speech playback timed out')); }, 30000);
       utterance.onend = () => { clearTimeout(timeout); resolve(); };
       utterance.onerror = event => { clearTimeout(timeout); reject(Error(`Speech playback failed (${event.error || 'unknown'})`)); };
@@ -27,10 +49,11 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
     });
   }
   function listen() {
-    if (!enabled || busy || recognition) return;
+    if (!enabled || busy || recognition || document.hidden) return;
     const current = new Recognition(); recognition = current;
     current.lang = navigator.language || 'en-US'; current.continuous = true; current.interimResults = false;
     current.onresult = event => {
+      if (!enabled || busy || recognition !== current) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (!event.results[i].isFinal) continue;
         const heard = event.results[i][0].transcript.trim();
@@ -76,7 +99,7 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
     if (recorder?.state === 'recording') { recorder.stop(); recordButton.textContent = 'Tap to speak'; recordButton.disabled = true; status.textContent = 'Transcribing…'; return; }
     if (busy) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { status.textContent = 'Recording is unavailable in this browser.'; return; }
-    enabled = false; stopListening(); toggle.textContent = 'Enable Hey FRED';
+    stopListening(); armed = false; words = '';
     try {
       stream = await navigator.mediaDevices.getUserMedia({audio:true});
       const chunks = []; recorder = new MediaRecorder(stream);
@@ -94,20 +117,26 @@ if (typeof document !== 'undefined' && document.getElementById('wakeToggle') && 
           try { await speak(data.reply); status.textContent = 'Tap to speak when ready.'; }
           catch (error) { status.textContent = `Reply shown below; audio unavailable: ${error.message}`; }
         } catch (error) { status.textContent = `Tap to speak failed: ${error.message}`; }
-        finally { busy = false; recordButton.disabled = false; hardware('idle'); }
+        finally { busy = false; recordButton.disabled = false; hardware('idle'); if (enabled) { status.textContent += ' Listening for “Hey FRED”…'; restart = setTimeout(listen, 700); } }
       };
       recorder.onerror = () => { status.textContent = 'Recording failed. Tap to retry.'; };
       recorder.start(); busy = true; hardware('listening');
       recordButton.textContent = 'Stop speaking'; status.textContent = 'Listening… tap Stop speaking when done.';
     } catch (error) { stream?.getTracks().forEach(track => track.stop()); stream = null; status.textContent = `Microphone access failed: ${error.message}`; }
   };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { stopListening(); armed = false; words = ''; }
+    else if (enabled) listen();
+  });
+  toggle.onclick();
   addEventListener('pagehide', () => { enabled = false; stopListening(); if (recorder?.state === 'recording') { recorder.onstop = null; recorder.stop(); } stream?.getTracks().forEach(track => track.stop()); });
 })();
 if (typeof document !== 'undefined') (() => {
   const manual = document.getElementById('talkButton');
   if (!manual) return;
   const panel = document.createElement('section');
-  panel.innerHTML = '<button type="button" id="wakeToggle">Enable hands-free · Hey FRED</button><p id="wakeStatus" role="status">Hands-free off.</p><p class="muted">When enabled, your microphone listens for “Hey FRED”. Browser speech recognition may send audio to its provider, including speech before the wake phrase. Turn it off any time. Only your request after the name is sent to FRED’s conversation service.</p>';
+  panel.innerHTML = '<button type="button" id="wakeToggle">Start Hey FRED</button><p id="wakeStatus" role="status">Starting Hey FRED…</p><p class="muted">Your microphone listens for “Hey FRED”. Browser speech recognition may send audio to its provider, including speech before the wake phrase. Turn it off any time. Only your request after the name is sent to FRED’s conversation service.</p>';
+  panel.innerHTML += '<details><summary>Voice settings</summary><div id=fredVoiceSettings></div></details>';
   manual.before(panel);
   const toggle = panel.querySelector('button'), status = panel.querySelector('[role=status]');
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -154,7 +183,7 @@ if (typeof document !== 'undefined') (() => {
         status.textContent = 'Listening for “Hey FRED”…'; restart = setTimeout(listen, 700);
       };
       if (!window.speechSynthesis) { finish(); return; }
-      const utterance = new SpeechSynthesisUtterance(data.reply);
+      const utterance = window.fredApplyVoice(new SpeechSynthesisUtterance(data.reply));
       utterance.onend = finish;
       utterance.onerror = () => { finish(); status.textContent = 'Speech playback failed. Reply is shown above.'; };
       // Never reopen recognition while audio could still be playing.
@@ -165,7 +194,7 @@ if (typeof document !== 'undefined') (() => {
     } finally { clearTimeout(timeout); }
   }
   function listen() {
-    if (!enabled || busy || recognition) return;
+    if (!enabled || busy || recognition || document.hidden) return;
     const current = new Recognition(); recognition = current;
     current.lang = navigator.language || 'en-US'; current.continuous = true; current.interimResults = true;
     current.onresult = event => {
@@ -202,5 +231,35 @@ if (typeof document !== 'undefined') (() => {
     toggle.textContent = 'Turn hands-free off'; status.textContent = 'Listening for “Hey FRED”…'; listen();
   };
   addEventListener('pagehide', () => { if (enabled) disable(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && enabled) disable('Hands-free paused because this page was hidden. Enable it to resume.'); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && enabled) { haltRecognition(); resetTurn(); status.textContent = 'Hey FRED paused while this page is hidden.'; }
+    else if (enabled) { status.textContent = 'Listening for “Hey FRED”…'; listen(); }
+  });
+  toggle.onclick();
+})();
+
+if (typeof document !== 'undefined') (() => {
+  const container = document.getElementById('fredVoiceSettings');
+  if (!container) return;
+  container.innerHTML = '<label>FRED’s voice <select id="fredVoiceGender"><option value="male">Male</option><option value="female">Female</option></select></label><label>Installed voice <select id="fredVoiceURI"><option value="">Automatic</option></select></label><p id="fredVoiceHint" role="status"></p>';
+  const gender = document.getElementById('fredVoiceGender');
+  const voice = document.getElementById('fredVoiceURI');
+  const hint = document.getElementById('fredVoiceHint');
+  function read(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+  function save(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+  function refresh() {
+    gender.value = read('fredVoiceGender') === 'female' ? 'female' : 'male';
+    const voices = window.speechSynthesis?.getVoices?.() || [];
+    voice.replaceChildren(new Option('Automatic', ''));
+    voices.forEach(item => voice.add(new Option(`${item.name} (${item.lang})`, item.voiceURI)));
+    voice.value = read('fredVoiceURI') || '';
+    const chosen = fredChooseVoice(voices, gender.value, navigator.language, voice.value);
+    hint.textContent = chosen ? `Using ${chosen.name}. Applies to the next reply.`
+      : 'No matching voice available yet. Using the browser default; choose an installed voice or add one in your device settings.';
+  }
+  gender.onchange = () => { save('fredVoiceGender', gender.value); save('fredVoiceURI', ''); refresh(); };
+  voice.onchange = () => { save('fredVoiceURI', voice.value); refresh(); };
+  window.speechSynthesis?.addEventListener?.('voiceschanged', refresh);
+  addEventListener('storage', refresh);
+  refresh();
 })();

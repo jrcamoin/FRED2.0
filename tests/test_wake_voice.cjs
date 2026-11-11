@@ -18,6 +18,7 @@ function harness() {
   const form = {querySelector: () => button, querySelectorAll: () => [button,input]};
   const panel = {querySelector: s => s === 'button' ? toggle : status};
   const elements = {talkButton:manual, messageForm:form, chat};
+  const listeners = {};
   const timers = new Map(), recognizers = [], requests = []; let id = 0;
   class Recognition {
     constructor() { recognizers.push(this); }
@@ -25,20 +26,20 @@ function harness() {
     result(text) { this.onresult({resultIndex:0, results:[Object.assign([{transcript:text}], {isFinal:true})]}); }
   }
   const context = {
-    document:{getElementById: id => elements[id], createElement: tag => tag === 'section' ? panel : {}, addEventListener() {}},
+    document:{getElementById: id => elements[id], createElement: tag => tag === 'section' ? panel : {}, addEventListener(name, fn) { listeners[name] = fn; }},
     window:{SpeechRecognition:Recognition, speechSynthesis:{cancel() {}, speak(u) { context.utterance=u; }}},
     navigator:{language:'en-US'}, addEventListener() {}, SpeechSynthesisUtterance:class {constructor(text){this.text=text;}},
     setTimeout:(fn,ms) => {timers.set(++id,{fn,ms});return id;}, clearTimeout:id => timers.delete(id),
     AbortController, fetch:async (url, options) => {requests.push({url,options});return {ok:true,json:async()=>({reply:'Hello'})};},
   };
   vm.runInNewContext(source,context);
-  return {context,toggle,status,recognizers,requests, async timer(ms) {
+  return {context,toggle,status,recognizers,requests,listeners, async timer(ms) {
     const entry=[...timers].find(([,t])=>t.ms===ms); assert.ok(entry,`timer ${ms}`);
     timers.delete(entry[0]); await entry[1].fn();
   }};
 }
 test('ignores ambient speech, accepts wake then question, pauses until TTS ends', async () => {
-  const h=harness(); h.toggle.onclick(); const r=h.recognizers[0];
+  const h=harness(); const r=h.recognizers[0];
   r.result('ordinary conversation');
   assert.equal(h.requests.length,0);
   r.result('Hey Fred'); r.result('How are you?'); await h.timer(1400);
@@ -49,7 +50,7 @@ test('ignores ambient speech, accepts wake then question, pauses until TTS ends'
   h.toggle.onclick(); assert.ok(h.recognizers[1].aborted);
 });
 test('wake with no question expires without sending a conversation', async () => {
-  const h=harness(); h.toggle.onclick(); h.recognizers[0].result('Fred');
+  const h=harness(); h.recognizers[0].result('Fred');
   await h.timer(15000);
   assert.equal(h.requests.filter(r=>r.url==='/api/conversation').length,0);
 });
@@ -64,14 +65,14 @@ test('head display handles wake, request, and spoken reply', async () => {
     result(text) { this.onresult({resultIndex:0, results:[Object.assign([{transcript:text}], {isFinal:true})]}); }
   }
   const context = {
-    document:{getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply})[name]},
+    document:{addEventListener() {}, getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply})[name]},
     window:{SpeechRecognition:Recognition, speechSynthesis:{cancel() {}, speak(u) {utterance=u;}}},
     navigator:{language:'en-US'}, addEventListener() {}, SpeechSynthesisUtterance:class {constructor(text){this.text=text;}},
     setTimeout:(fn,ms) => {timers.set(++id,{fn,ms});return id;}, clearTimeout:id => timers.delete(id),
     fetch:async (url,options) => {requests.push({url,options});return {ok:true,json:async()=>({reply:'Hello from FRED'})};},
   };
   vm.runInNewContext(source,context);
-  toggle.onclick(); recognizers[0].result('Hey Fred'); recognizers[0].result('How are you?');
+  recognizers[0].result('Hey Fred'); recognizers[0].result('How are you?');
   const entry=[...timers].find(([,t])=>t.ms===1400); assert.ok(entry); timers.delete(entry[0]);
   const pending=entry[1].fn();
   await new Promise(resolve => setImmediate(resolve));
@@ -95,7 +96,7 @@ test('head tap-to-speak sends recorded audio through the head voice endpoint', a
     }
   }
   const context = {
-    document:{getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply, headRecord:record})[name]},
+    document:{addEventListener() {}, getElementById: name => ({wakeToggle:toggle, wakeStatus:status, wakeReply:reply, headRecord:record})[name]},
     window:{MediaRecorder:Recorder, speechSynthesis:{cancel() {}, speak(u) {spoken = u.text; queueMicrotask(() => u.onend());}}},
     MediaRecorder:Recorder, Blob, Uint8Array, btoa,
     navigator:{mediaDevices:{getUserMedia:async () => ({getTracks:() => [{stop() {stopped = true;}}]})}},
@@ -127,4 +128,46 @@ test('head tap-to-speak sends recorded audio through the head voice endpoint', a
   assert.equal(reply.textContent, 'Hi there');
   assert.match(status.textContent, /audio unavailable: Speech playback failed \(synthesis-unavailable\)/);
   assert.equal(record.disabled, false);
+});
+
+test('starts automatically, resumes after hiding, and respects an explicit pause', () => {
+  const h = harness();
+  assert.equal(h.recognizers.length, 1);
+  h.context.document.hidden = true;
+  h.listeners.visibilitychange();
+  assert.ok(h.recognizers[0].aborted);
+  h.context.document.hidden = false;
+  h.listeners.visibilitychange();
+  assert.equal(h.recognizers.length, 2);
+  h.toggle.onclick();
+  h.context.document.hidden = true;
+  h.listeners.visibilitychange();
+  h.context.document.hidden = false;
+  h.listeners.visibilitychange();
+  assert.equal(h.recognizers.length, 2);
+});
+
+test('voice selection matches language and gender and honors an explicit voice', () => {
+  const {fredChooseVoice} = require('../src/dementia_care_robot/static/site/wake-voice.js');
+  const voices = [
+    {name:'Samantha', lang:'en-US', voiceURI:'sam'},
+    {name:'Daniel', lang:'en-GB', voiceURI:'dan'},
+    {name:'Alex', lang:'en-US', voiceURI:'alex'},
+  ];
+  assert.equal(fredChooseVoice(voices, 'male', 'en-US').voiceURI, 'alex');
+  assert.equal(fredChooseVoice(voices, 'female', 'en-US').voiceURI, 'sam');
+  assert.equal(fredChooseVoice(voices, 'male', 'en-GB').voiceURI, 'dan');
+  assert.equal(fredChooseVoice(voices, 'male', 'en-US', 'dan').voiceURI, 'dan');
+  assert.equal(fredChooseVoice([], 'male', 'en-US'), null);
+  assert.equal(fredChooseVoice([voices[0]], 'male', 'en-US'), null);
+});
+
+test('speech applies saved preference and tolerates unavailable storage', () => {
+  const voices = [{name:'Alex',lang:'en-US',voiceURI:'alex'}, {name:'Samantha',lang:'en-US',voiceURI:'sam'}];
+  const context = {window:{speechSynthesis:{getVoices:() => voices}}, navigator:{language:'en-US'},
+    localStorage:{getItem: key => key === 'fredVoiceGender' ? 'female' : ''}};
+  vm.runInNewContext(source, context);
+  assert.equal(context.window.fredApplyVoice({}).voice.voiceURI, 'sam');
+  context.localStorage.getItem = () => { throw Error('Storage blocked'); };
+  assert.equal(context.window.fredApplyVoice({}).voice.voiceURI, 'alex');
 });

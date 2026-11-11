@@ -57,7 +57,7 @@ function tick() {
       if (ordered.length) {
         const eyes = ordered[0].keypoints.slice(0, 2);
         const x = (eyes[0].x + eyes[1].x) / 2, y = (eyes[0].y + eyes[1].y) / 2;
-        const u = Math.max(-1, Math.min(1, 2*x-1)), v = Math.max(-1, Math.min(1, 2*y-1));
+        const u = Math.max(-1, Math.min(1, 1-2*x)), v = Math.max(-1, Math.min(1, 2*y-1));
         ctx.beginPath(); ctx.arc(x*canvas.width, y*canvas.height, 7, 0, Math.PI*2); ctx.fillStyle='#43ff99'; ctx.fill();
         gaze(u, v); status.textContent = 'Tracking the largest visible face.';
         metrics.textContent = `${ordered.length} face(s) · gaze (${u.toFixed(2)}, ${v.toFixed(2)}) · inference ${elapsed.toFixed(0)} ms`;
