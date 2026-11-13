@@ -1,0 +1,3 @@
+# Robot-side humanframe-deploy installs the HumanFrame SDK separately.
+# Do not use '-e .' here: the deployer's cwd need not be the app root.
+cryptography>=38

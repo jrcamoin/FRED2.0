@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LinkedIn draft studio · Human Frame Robotics</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f6f1;color:#203b34;font:16px/1.5 system-ui,sans-serif}main{max-width:850px;margin:auto;padding:48px 22px}h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.1;margin:8px 0 12px}h2{font-size:1.25rem;margin:0 0 20px}.eyebrow{font-weight:750;letter-spacing:.14em;text-transform:uppercase;font-size:.75rem;color:#577267}.intro{color:#52675e;max-width:650px}.card{background:white;border:1px solid #dce6dd;border-radius:20px;padding:26px;margin:24px 0;box-shadow:0 8px 25px #1d3d2e0a}label{display:block;font-weight:700;margin:16px 0 5px}input,select,textarea{width:100%;font:inherit;color:inherit;padding:12px;border:1px solid #afc0b4;border-radius:10px;background:white}textarea{min-height:210px;resize:vertical}button,.button{display:inline-block;border:0;border-radius:10px;background:#285b49;color:white;padding:12px 18px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none}button.secondary,.button.secondary{background:#e6eee7;color:#234c3a}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.hint{font-size:.9rem;color:#5d7166}#status{min-height:1.5em;font-weight:650}a{color:#285b49}input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid #cb8e42;outline-offset:2px}
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Human Frame Robotics · Marketing</div>
+  <h1>LinkedIn draft studio</h1>
+  <p class="intro">Fill in a few details, generate a starting draft, edit it, then copy it into LinkedIn. Nothing is posted automatically.</p>
+  <section class="card" aria-labelledby="details-title">
+    <h2 id="details-title">What would you like to share?</h2>
+    <label for="topic">Topic or update</label>
+    <input id="topic" placeholder="e.g. We are testing FRED's familiar photo experience">
+    <label for="detail">One concrete detail</label>
+    <input id="detail" placeholder="e.g. Families can add photos that appear during conversations">
+    <label for="takeaway">Why it matters</label>
+    <input id="takeaway" placeholder="e.g. Familiar moments can make everyday interaction feel more personal">
+    <label for="tone">Tone</label>
+    <select id="tone"><option value="thoughtful">Thoughtful</option><option value="direct">Direct</option><option value="warm">Warm</option></select>
+    <div class="actions"><button id="generate" type="button">Generate draft</button><button id="example" class="secondary" type="button">Fill example</button></div>
+  </section>
+  <section class="card" aria-labelledby="draft-title">
+    <h2 id="draft-title">Review your post</h2>
+    <label for="draft">Editable LinkedIn post</label>
+    <textarea id="draft" placeholder="Your draft will appear here."></textarea>
+    <p class="hint">Check every claim before sharing, especially statements about care outcomes or features still in development.</p>
+    <div class="actions"><button id="copy" type="button">Copy post</button><a class="button secondary" href="https://www.linkedin.com/feed/" target="_blank" rel="noopener noreferrer">Open LinkedIn ↗</a></div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  $('example').addEventListener('click', () => {
+    $('topic').value = 'We are building FRED, a robot companion project for people living with dementia and their caregivers';
+    $('detail').value = 'Our prototype brings conversation, familiar photos, and gentle reminders together';
+    $('takeaway').value = 'We are learning how everyday support can feel more familiar and personal';
+    $('status').textContent = 'Example details filled in. Select Generate draft to continue.';
+  });
+  $('generate').addEventListener('click', () => {
+    const topic = $('topic').value.trim();
+    const detail = $('detail').value.trim();
+    const takeaway = $('takeaway').value.trim();
+    if (!topic) { $('status').textContent = 'Add a topic or update first.'; $('topic').focus(); return; }
+    const opener = $('tone').value === 'warm' ? `We'd like to share an update: ${topic}.` : $('tone').value === 'direct' ? `${topic}.` : `An update from Human Frame Robotics: ${topic}.`;
+    const paragraphs = [opener, detail && `${detail}.`, takeaway && `${takeaway}.`, 'We will share more as we continue developing FRED.'];
+    $('draft').value = paragraphs.filter(Boolean).join('\n\n');
+    $('status').textContent = 'Draft generated. Review and edit it before copying.';
+    $('draft').focus();
+  });
+  $('copy').addEventListener('click', async () => {
+    if (!$('draft').value.trim()) { $('status').textContent = 'Generate or write a post first.'; return; }
+    try {
+      await navigator.clipboard.writeText($('draft').value);
+      $('status').textContent = 'Copied. Open LinkedIn and paste into a new post.';
+    } catch {
+      $('draft').select();
+      $('status').textContent = 'Select Copy from your browser or press Command+C / Control+C, then paste into LinkedIn.';
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<!-- Add these rules inside <windowRules> in ~/.config/labwc/rc.xml.
+     Replace output names after running wlr-randr on the Pi. -->
+<windowRule title="FRED head">
+    <action name="MoveToOutput" output="HDMI-A-1" />
+    <action name="ToggleFullscreen" />
+</windowRule>
+<windowRule title="FRED · Human Frame Robotics">
+    <action name="MoveToOutput" output="HDMI-A-2" />
+    <action name="ToggleFullscreen" />
+</windowRule>

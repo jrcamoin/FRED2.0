@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fred_hri</name><version>0.1.0</version>
+  <description>Low latency face tracking, neck control and display gateway.</description>
+  <maintainer email="engineering@example.com">FRED engineering</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend><exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend><exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend><exec_depend>python3-numpy</exec_depend>
+  <exec_depend>launch_ros</exec_depend><exec_depend>ament_index_python</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

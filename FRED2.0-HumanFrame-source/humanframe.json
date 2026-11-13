@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "fred-companion",
+  "name": "FRED 2.0 Companion",
+  "version": "0.2.0",
+  "entrypoint": "app.py",
+  "port": 8000,
+  "permissions": ["microphone"]
+}

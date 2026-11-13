@@ -1,0 +1,3 @@
+# Install using the same system Python ABI as ROS/cv_bridge.
+mediapipe>=0.10.14,<0.11
+websockets>=14,<18
